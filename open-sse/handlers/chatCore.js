@@ -37,7 +37,7 @@ import { resolveSessionId } from "../utils/sessionManager.js";
  * @param {object} options.credentials - Provider credentials
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  */
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, requestPolicy = null }) {
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
   // Stable per-session color so all lines of one CLI conversation share a tag
@@ -293,7 +293,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Execute request
   let providerResponse, providerUrl, providerHeaders, finalBody;
   try {
-    const result = await executor.execute({ model, body: translatedBody, stream, credentials, signal: streamController.signal, log, proxyOptions });
+    const result = await executor.execute({ model, body: translatedBody, stream, credentials, signal: streamController.signal, log, proxyOptions, requestPolicy });
     providerResponse = result.response;
     providerUrl = result.url;
     providerHeaders = result.headers;
@@ -313,15 +313,16 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       status: "error"
     })).catch(() => { });
 
-    if (error.name === "AbortError") {
+    if (error.name === "AbortError" || error.errorKind === "aborted") {
       streamController.handleError(error);
-      return createErrorResult(499, "Request aborted");
+      return createErrorResult(499, "Request aborted", undefined, "aborted");
     }
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
     if (log?.errorLine) {
       log.errorLine(reqTag, "✗", `ERROR 502 · ${provider}/${model} · ${Date.now() - requestStartTime}ms\n    ${errMsg}${error.stack ? `\n    ${error.stack}` : ""}`);
     }
-    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
+    // errorKind classified by BaseExecutor (connect_timeout | network); default to "network".
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg, undefined, error.errorKind || "network");
   }
 
   // Handle 401/403 - try token refresh (skip for noAuth providers)
@@ -368,7 +369,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       log.errorLine(reqTag, "✗", `ERROR ${statusCode} · ${provider}/${model} · ${Date.now() - requestStartTime}ms${urlStr}\n    ${errMsg}`);
     }
     reqLogger.logError(new Error(message), finalBody || translatedBody);
-    return createErrorResult(statusCode, errMsg, resetsAtMs);
+    return createErrorResult(statusCode, errMsg, resetsAtMs, `http_${statusCode}`);
   }
 
   const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, pxpipe: pxpipeSummary, reqTag, log };
