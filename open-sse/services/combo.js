@@ -2,7 +2,7 @@
  * Shared combo (model combo) handling with fallback support
  */
 
-import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
+import { checkFallbackError, formatRetryAfter, isCodexRequestSchemaError } from "./accountFallback.js";
 import { unavailableResponse } from "../utils/error.js";
 import { getRoutingMeta } from "./routingMeta.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
@@ -281,6 +281,10 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
         try { errorText = JSON.stringify(errorText); } catch { errorText = String(errorText); }
       }
 
+      if (modelStr.startsWith("cx/") && isCodexRequestSchemaError("codex", result.status, errorText)) {
+        log.warn("COMBO", `Model ${modelStr} failed with a non-retryable request schema error`, { status: result.status });
+        return result;
+      }
       // Check if should fallback to next model
       const { shouldFallback, cooldownMs } = checkFallbackError(result.status, errorText);
 
