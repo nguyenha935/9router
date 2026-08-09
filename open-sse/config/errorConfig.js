@@ -50,17 +50,38 @@ const COOLDOWN = {
 /**
  * Unified error classification rules.
  * Checked top-to-bottom: text rules first (by order), then status rules.
- * Each rule: { text?, status?, cooldownMs?, backoff? }
+ * Each rule: { text?, status?, cooldownMs?, backoff?, fallback? }
  *   - text: substring match (case-insensitive) on error message
  *   - status: HTTP status code match
  *   - cooldownMs: fixed cooldown duration
  *   - backoff: true = use exponential backoff (rate limit)
+ *   - fallback: false = request-scoped failure. Do not switch accounts and do
+ *     not cool the current one down, because a retry with the same body cannot
+ *     succeed anywhere.
  */
 export const ERROR_RULES = [
   // --- Text-based rules (checked first, order = priority) ---
+  // An over-long prompt is a property of the request, not of the account: every
+  // account will reject the same body with the same error, so falling back
+  // burns a second upstream call for nothing and the cooldown takes healthy
+  // accounts out of rotation for unrelated (short) traffic on the same model.
+  { text: "context_length_exceeded",  fallback: false },
   { text: "no credentials",           cooldownMs: COOLDOWN.long },
   { text: "request not allowed",      cooldownMs: COOLDOWN.short },
-  { text: "improperly formed request", cooldownMs: COOLDOWN.long },
+  // Same reasoning: a malformed body is a property of the REQUEST. Every account
+  // rejects the identical payload the same way, so the old cooldown here took
+  // healthy accounts out of rotation for a failure they did not cause (measured
+  // on Kiro: 39 of 44 error rows carried errorCode 400 and 12 connections went
+  // out of rotation within 18s). Matched on the human message and on the machine
+  // reason code, which arrive in the same body:
+  //   {"message":"Improperly formed request.","reason":"REQUEST_BODY_INVALID"}
+  // Deliberately NOT matching the generic "invalid_request_error" type: it is a
+  // catch-all that Anthropic also uses "for other 4XX status codes", and 9router
+  // itself stamps it on every 400/404/406 via ERROR_TYPES. Since text rules are
+  // checked before status rules, such a rule would shadow the 404 rule below and
+  // suppress fallback for account-scoped failures.
+  { text: "improperly formed request", fallback: false },
+  { text: "request_body_invalid",     fallback: false },
   { text: "rate limit",               backoff: true },
   { text: "too many requests",        backoff: true },
   { text: "quota exceeded",           backoff: true },
