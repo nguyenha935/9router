@@ -31,7 +31,7 @@ async function writeAndCollect(transform, chunks) {
 }
 
 describe("Antigravity Recent Requests usage", () => {
-  it("finalizes native Antigravity usage when the final chunk arrives before stream close", async () => {
+  it("finalizes native Antigravity usage only after stream close", async () => {
     let completed = null;
     const stream = createPassthroughStreamWithLogger(
       "antigravity",
@@ -47,7 +47,9 @@ describe("Antigravity Recent Requests usage", () => {
 
     const writer = stream.writable.getWriter();
     const reader = stream.readable.getReader();
-    const readOne = reader.read();
+    const readAll = (async () => {
+      while (!(await reader.read()).done) { /* drain */ }
+    })();
 
     const event = {
       response: {
@@ -67,7 +69,9 @@ describe("Antigravity Recent Requests usage", () => {
     };
 
     await writer.write(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
-    await readOne;
+    expect(completed).toBeNull();
+    await writer.close();
+    await readAll;
 
     expect(completed?.content?.content).toBe("AG_NATIVE_USAGE_OK");
     expect(completed?.usage).toMatchObject({
@@ -75,12 +79,9 @@ describe("Antigravity Recent Requests usage", () => {
       completion_tokens: 12,
       total_tokens: 30,
     });
-
-    await writer.abort();
-    await reader.cancel().catch(() => {});
   });
 
-  it("finalizes translated Responses API Antigravity usage when the final chunk arrives before stream close", async () => {
+  it("finalizes translated Responses API Antigravity usage only after stream close", async () => {
     let completed = null;
     const stream = createSSETransformStreamWithLogger(
       FORMATS.ANTIGRAVITY,
@@ -99,7 +100,9 @@ describe("Antigravity Recent Requests usage", () => {
 
     const writer = stream.writable.getWriter();
     const reader = stream.readable.getReader();
-    const readOne = reader.read();
+    const readAll = (async () => {
+      while (!(await reader.read()).done) { /* drain */ }
+    })();
 
     const event = {
       response: {
@@ -119,7 +122,9 @@ describe("Antigravity Recent Requests usage", () => {
     };
 
     await writer.write(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
-    await readOne;
+    expect(completed).toBeNull();
+    await writer.close();
+    await readAll;
 
     expect(completed?.content?.content).toBe("AG_RESPONSES_USAGE_OK");
     expect(completed?.usage).toMatchObject({
@@ -127,9 +132,6 @@ describe("Antigravity Recent Requests usage", () => {
       completion_tokens: 13,
       total_tokens: 34,
     });
-
-    await writer.abort();
-    await reader.cancel().catch(() => {});
   });
 
   it("estimates usage for Antigravity passthrough content when upstream omits usageMetadata", async () => {

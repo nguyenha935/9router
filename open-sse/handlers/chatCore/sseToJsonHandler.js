@@ -5,6 +5,7 @@ import { FORMATS } from "../../translator/formats.js";
 import { PROVIDERS } from "../../config/providers.js";
 import { buildRequestDetail, extractRequestConfig, saveUsageStats, formatDoneLine } from "./requestDetail.js";
 import { ROLE, RESPONSES_ITEM } from "../../translator/schema/index.js";
+import { evaluateChatJson } from "../../utils/upstreamOutcome.js";
 
 // Responses-API providers (e.g. codex) may emit SSE without content-type + use Responses output shape
 const isResponsesProvider = (p) => PROVIDERS[p]?.format === FORMATS.OPENAI_RESPONSES;
@@ -112,27 +113,36 @@ function chatCompletionToResponses(responseBody, customToolNames = null) {
 export function parseSSEToOpenAIResponse(rawSSE, fallbackModel) {
   const chunks = [];
   let streamError = null;
+  let doneSeen = false;
+  let malformedSeen = false;
 
   for (const line of String(rawSSE || "").split("\n")) {
     const trimmed = line.trim();
     if (!trimmed.startsWith("data:")) continue;
     const payload = trimmed.slice(5).trim();
-    if (!payload || payload === "[DONE]") continue;
+    if (!payload) continue;
+    if (payload === "[DONE]") {
+      doneSeen = true;
+      continue;
+    }
     try {
       const chunk = JSON.parse(payload);
       if (chunk?.error) streamError = chunk.error;
       else chunks.push(chunk);
-    } catch { /* ignore malformed lines */ }
+    } catch {
+      malformedSeen = true;
+    }
   }
 
   if (streamError) return { error: streamError };
+  if (malformedSeen) return { error: { message: "Upstream SSE contained malformed JSON" }, errorKind: "invalid_upstream_json" };
   if (chunks.length === 0) return null;
 
   const first = chunks[0];
   const contentParts = [];
   const reasoningParts = [];
   const toolCallMap = new Map(); // index -> { id, type, function: { name, arguments } }
-  let finishReason = "stop";
+  let finishReason = null;
   let usage = null;
 
   for (const chunk of chunks) {
@@ -164,12 +174,16 @@ export function parseSSEToOpenAIResponse(rawSSE, fallbackModel) {
     message.tool_calls = [...toolCallMap.entries()].sort((a, b) => a[0] - b[0]).map(([, tc]) => tc);
   }
 
+  if (!finishReason && !doneSeen) {
+    return { error: { message: "Upstream SSE ended without finish_reason or [DONE]" }, errorKind: "upstream_incomplete" };
+  }
+
   const result = {
     id: first.id || `chatcmpl-${Date.now()}`,
     object: "chat.completion",
     created: first.created || Math.floor(Date.now() / 1000),
     model: first.model || fallbackModel || "unknown",
-    choices: [{ index: 0, message, finish_reason: finishReason }]
+    choices: [{ index: 0, message, finish_reason: finishReason || (toolCallMap.size > 0 ? "tool_calls" : "stop") }]
   };
   if (usage) result.usage = usage;
   return result;
@@ -200,6 +214,11 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
   if (isCodexResponsesApi) {
     try {
       const jsonResponse = await convertResponsesStreamToJson(providerResponse.body);
+      const outcome = evaluateChatJson(jsonResponse, FORMATS.OPENAI_RESPONSES);
+      if (!outcome.ok) {
+        appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });
+        return createErrorResult(HTTP_STATUS.BAD_GATEWAY, outcome.message, undefined, outcome.errorKind);
+      }
       if (onRequestSuccess) await onRequestSuccess();
 
       const usage = jsonResponse.usage || {};
@@ -296,7 +315,9 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
     if (parsed.error) {
       return createErrorResult(
         HTTP_STATUS.BAD_GATEWAY,
-        parsed.error.message || "Upstream SSE stream failed"
+        parsed.error.message || "Upstream SSE stream failed",
+        undefined,
+        parsed.errorKind || "upstream_payload_error"
       );
     }
 

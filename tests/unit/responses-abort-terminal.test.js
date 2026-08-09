@@ -65,8 +65,6 @@ describe("Responses abort terminal synthesis", () => {
       null
     );
 
-    const text = await readAll(out);
-    expect(text).not.toContain("response.failed");
-    expect(text).not.toContain("[DONE]");
+    await expect(readAll(out)).rejects.toThrow("socket hang up");
   });
 });

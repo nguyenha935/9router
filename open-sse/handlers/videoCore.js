@@ -2,6 +2,7 @@ import { createErrorResult } from "../utils/error.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { refreshTokenByProvider } from "../services/tokenRefresh.js";
 import { PROVIDER_MEDIA } from "../providers/index.js";
+import { evaluateVideoJson } from "../utils/upstreamOutcome.js";
 
 // Upstream fetch deadline for video job submission/polling (the job itself is
 // async upstream — this only bounds the HTTP round-trip, not video rendering).
@@ -111,7 +112,13 @@ export async function handleVideoProxyCore({
     upstream = await doFetch(credentials?.accessToken || credentials?.apiKey);
   } catch (error) {
     if (error?.name === "AbortError" || error?.name === "TimeoutError") {
-      return createErrorResult(HTTP_STATUS.REQUEST_TIMEOUT, `[${provider}] video ${method} aborted: ${error.message}`);
+      const clientAborted = signal?.aborted === true;
+      return createErrorResult(
+        clientAborted ? 499 : HTTP_STATUS.REQUEST_TIMEOUT,
+        `[${provider}] video ${method} ${clientAborted ? "aborted" : "timed out"}: ${error.message}`,
+        undefined,
+        clientAborted ? "aborted" : "upstream_stall"
+      );
     }
     // Never re-send a creation POST on network error — the job may already exist upstream.
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, sanitizeSecrets(`[${provider}] video upstream fetch failed: ${error.message}`, credentials));
@@ -138,6 +145,19 @@ export async function handleVideoProxyCore({
       try {
         upstream = await doFetch(credentials.accessToken || credentials.apiKey);
       } catch (error) {
+        const clientAborted = signal?.aborted === true;
+        const timedOut = error?.name === "TimeoutError";
+        if (clientAborted || error?.name === "AbortError" || timedOut) {
+          return createErrorResult(
+            clientAborted ? 499 : HTTP_STATUS.REQUEST_TIMEOUT,
+            sanitizeSecrets(
+              `[${provider}] video retry after refresh ${clientAborted ? "aborted" : "timed out"}: ${error.message}`,
+              credentials
+            ),
+            undefined,
+            clientAborted ? "aborted" : "upstream_stall"
+          );
+        }
         return createErrorResult(HTTP_STATUS.BAD_GATEWAY, sanitizeSecrets(`[${provider}] video retry after refresh failed: ${error.message}`, credentials));
       }
     } else {
@@ -150,6 +170,18 @@ export async function handleVideoProxyCore({
   if (!upstream.ok) {
     const message = sanitizeSecrets(bodyText || `HTTP ${upstream.status}`, credentials);
     return createErrorResult(upstream.status, `[${provider}] ${message.slice(0, 2000)}`);
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(bodyText);
+  } catch {
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, `[${provider}] upstream returned invalid video JSON`, undefined, "invalid_upstream_json");
+  }
+
+  const outcome = evaluateVideoJson(payload, { method });
+  if (!outcome.ok) {
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, sanitizeSecrets(`[${provider}] ${outcome.message}`, credentials), undefined, outcome.errorKind);
   }
 
   // Success: pass the upstream JSON through untouched (request_id / status / video.url).

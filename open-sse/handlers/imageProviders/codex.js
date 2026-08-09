@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { nowSec } from "./_base.js";
 import { PROVIDERS } from "../../config/providers.js";
+import { extractPayloadError } from "../../utils/upstreamOutcome.js";
 
 const CODEX_RESPONSES_URL = PROVIDERS["codex"].baseUrl;
 const CODEX_USER_AGENT = "codex_cli_rs/0.136.0";
@@ -50,6 +51,8 @@ async function parseStream(response, log, callbacks = {}) {
   const decoder = new TextDecoder();
   let buffer = "";
   let imageB64 = null;
+  let streamError = null;
+  let terminalSeen = false;
   let lastEvent = null;
   let bytesReceived = 0;
   let lastProgressLogMs = 0;
@@ -84,31 +87,71 @@ async function parseStream(response, log, callbacks = {}) {
         callbacks.onProgress({ stage: eventName, bytesReceived });
       }
 
-      if (eventName === "response.image_generation_call.partial_image" && dataStr) {
+      let data = null;
+      if (dataStr && dataStr !== "[DONE]") {
         try {
-          const data = JSON.parse(dataStr);
-          if (callbacks.onPartialImage && data?.partial_image_b64) {
-            callbacks.onPartialImage({ b64_json: data.partial_image_b64, index: data.partial_image_index });
-          }
-        } catch {}
+          data = JSON.parse(dataStr);
+        } catch {
+          streamError = { errorKind: "invalid_upstream_json", message: "Codex image stream contained malformed JSON" };
+          continue;
+        }
+      }
+      const payloadError = extractPayloadError(data);
+      if (payloadError || eventName === "response.failed" || eventName === "response.incomplete" || eventName === "error") {
+        streamError = payloadError || {
+          errorKind: eventName === "response.incomplete" ? "upstream_incomplete" : "upstream_payload_error",
+          message: data?.response?.error?.message || data?.error?.message || `Codex image stream emitted ${eventName}`,
+        };
+      }
+      if (eventName === "response.completed" || eventName === "response.done" || eventName === "response.failed" || eventName === "response.incomplete") {
+        terminalSeen = true;
       }
 
-      if (eventName === "response.output_item.done" && dataStr) {
-        try {
-          const data = JSON.parse(dataStr);
-          const item = data?.item;
-          if (item?.type === "image_generation_call" && item.result) {
-            imageB64 = item.result;
-          }
-        } catch {}
+      if (eventName === "response.image_generation_call.partial_image" && data) {
+        if (callbacks.onPartialImage && data?.partial_image_b64) {
+          callbacks.onPartialImage({ b64_json: data.partial_image_b64, index: data.partial_image_index });
+        }
+      }
+
+      if (eventName === "response.output_item.done" && data) {
+        const item = data?.item;
+        if (item?.type === "image_generation_call" && item.result) {
+          imageB64 = item.result;
+        }
       }
     }
+  }
+  const remaining = decoder.decode();
+  if (remaining) buffer += remaining;
+  if (buffer.trim()) {
+    streamError = streamError || { errorKind: "invalid_upstream_json", message: "Codex image stream ended with an incomplete SSE event" };
+  }
+  if (streamError) {
+    const error = new Error(streamError.message || "Codex image stream failed");
+    error.errorKind = streamError.errorKind || "upstream_payload_error";
+    throw error;
+  }
+  if (!terminalSeen) {
+    const error = new Error("Codex image stream ended without a terminal event");
+    error.errorKind = "upstream_incomplete";
+    throw error;
   }
   return imageB64;
 }
 
-// SSE Response that pipes codex progress + partial + done events to client
+// SSE Response that pipes codex progress + partial + done events to client.
+// The ready promise is a precommit barrier: callers do not expose the Response
+// until image evidence is seen or the upstream fails first.
 function buildSseResponse(providerResponse, log, onSuccess) {
+  let settleReady;
+  let readySettled = false;
+  const ready = new Promise((resolve) => { settleReady = resolve; });
+  const settle = (outcome) => {
+    if (readySettled) return;
+    readySettled = true;
+    settleReady(outcome);
+  };
+
   const stream = new ReadableStream({
     async start(controller) {
       const enc = new TextEncoder();
@@ -118,22 +161,29 @@ function buildSseResponse(providerResponse, log, onSuccess) {
       try {
         const b64 = await parseStream(providerResponse, log, {
           onProgress: (info) => send("progress", info),
-          onPartialImage: (info) => send("partial_image", info),
+          onPartialImage: (info) => {
+            settle({ ok: true });
+            send("partial_image", info);
+          },
         });
         if (!b64) {
-          send("error", { message: "Codex did not return an image. Account may not be entitled (Plus/Pro required)." });
+          const message = "Codex did not return an image. Account may not be entitled (Plus/Pro required).";
+          settle({ ok: false, errorKind: "empty_upstream_response", message });
+          send("error", { message });
         } else {
+          settle({ ok: true });
           if (onSuccess) await onSuccess();
           send("done", { created: nowSec(), data: [{ b64_json: b64 }] });
         }
       } catch (err) {
-        send("error", { message: err?.message || "Stream failed" });
+        settle({ ok: false, errorKind: err?.errorKind || "upstream_payload_error", message: err?.message || "Stream failed" });
+        send("error", { message: err?.message || "Stream failed", errorKind: err?.errorKind || "upstream_payload_error" });
       } finally {
         controller.close();
       }
     },
   });
-  return new Response(stream, {
+  const response = new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
@@ -142,6 +192,7 @@ function buildSseResponse(providerResponse, log, onSuccess) {
       "Access-Control-Allow-Origin": "*",
     },
   });
+  return { response, ready };
 }
 
 export default {
@@ -187,7 +238,8 @@ export default {
   // Custom: codex parses SSE → either pipe to client or collect b64
   async parseResponse(response, { log, streamToClient, onRequestSuccess }) {
     if (streamToClient) {
-      return { sseResponse: buildSseResponse(response, log, onRequestSuccess) };
+      const streamResult = buildSseResponse(response, log, onRequestSuccess);
+      return { sseResponse: streamResult.response, precommit: streamResult.ready };
     }
     const b64 = await parseStream(response, log);
     if (!b64) {

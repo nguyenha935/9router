@@ -49,16 +49,21 @@ vi.mock("../../src/sse/services/tokenRefresh.js", () => ({
 vi.mock("../../open-sse/handlers/chatCore.js", () => ({ handleChatCore: mocks.handleChatCore }));
 vi.mock("../../open-sse/services/projectId.js", () => ({ getProjectIdForConnection: vi.fn() }));
 
-function makeRequest(model) {
+function makeRequest(model, signal = null) {
   return new Request("http://localhost/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model, messages: [{ role: "user", content: "hi" }] }),
+    ...(signal ? { signal } : {}),
   });
 }
 
 const fail502 = () => ({
   success: false, status: 502, error: "[502]: upstream busy", errorKind: "http_502",
+  response: new Response("err", { status: 502 }),
+});
+const semanticFail502 = () => ({
+  success: false, status: 502, error: "upstream error envelope", errorKind: "upstream_payload_error",
   response: new Response("err", { status: 502 }),
 });
 const ok = () => ({ success: true, response: new Response("ok", { status: 200 }) });
@@ -143,6 +148,26 @@ describe("account retry calls the same account retryAttempts extra times", () =>
     await handleChat(makeRequest("kr-ac/m1"));
 
     expect(calledConnections()).toEqual(["kr-1", "kr-1"]);
+  });
+});
+
+describe("precommit semantic failures use the same account routing", () => {
+  it("moves to the next account under a skip rule", async () => {
+    settings([{ provider: "kr-ac", match: { kind: "upstream_payload_error" }, action: "skip" }]);
+    mocks.getProviderConnections.mockResolvedValue([
+      { id: "kr-1", provider: "kr-ac", isActive: true, priority: 1, backoffLevel: 0 },
+      { id: "kr-2", provider: "kr-ac", isActive: true, priority: 2, backoffLevel: 0 },
+    ]);
+    mocks.handleChatCore
+      .mockResolvedValueOnce(semanticFail502())
+      .mockResolvedValueOnce(ok());
+
+    const { handleChat } = await import("../../src/sse/handlers/chat.js");
+    const resp = await handleChat(makeRequest("kr-ac/m1"));
+
+    expect(resp.status).toBe(200);
+    expect(calledConnections()).toEqual(["kr-1", "kr-2"]);
+    expect(mocks.updateProviderConnection).not.toHaveBeenCalled();
   });
 });
 
@@ -252,6 +277,39 @@ describe("client abort stops the retry loop", () => {
     expect(resp.status).toBe(499);
     expect(calledConnections()).toEqual(["kr-1"]); // no retry after an abort
     expect(mocks.updateProviderConnection).not.toHaveBeenCalled();
+  });
+
+  it("returns before account health matching even when no abort skip rule exists", async () => {
+    settings([]);
+    mocks.getProviderConnections.mockResolvedValue([
+      { id: "kr-1", provider: "kr-ac", isActive: true, backoffLevel: 0 },
+    ]);
+    mocks.handleChatCore.mockResolvedValue({
+      success: false, status: 499, error: "Request aborted", errorKind: "aborted",
+      response: new Response("aborted", { status: 499 }),
+    });
+
+    const { handleChat } = await import("../../src/sse/handlers/chat.js");
+    const resp = await handleChat(makeRequest("kr-ac/m1"));
+
+    expect(resp.status).toBe(499);
+    expect(calledConnections()).toEqual(["kr-1"]);
+    expect(mocks.updateProviderConnection).not.toHaveBeenCalled();
+  });
+
+  it("passes the request cancellation signal into chatCore", async () => {
+    settings([]);
+    mocks.getProviderConnections.mockResolvedValue([
+      { id: "kr-1", provider: "kr-ac", isActive: true, backoffLevel: 0 },
+    ]);
+    mocks.handleChatCore.mockResolvedValue(ok());
+    const controller = new AbortController();
+    const request = makeRequest("kr-ac/m1", controller.signal);
+
+    const { handleChat } = await import("../../src/sse/handlers/chat.js");
+    await handleChat(request);
+
+    expect(mocks.handleChatCore.mock.calls[0][0].requestSignal).toBe(request.signal);
   });
 });
 

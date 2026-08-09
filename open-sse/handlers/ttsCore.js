@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { createErrorResult } from "../utils/error.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { getTtsAdapter, synthesizeViaConfig } from "./ttsProviders/index.js";
+import { evaluateAudioResult } from "../utils/upstreamOutcome.js";
 
 // Re-export voice fetchers + voices APIs for backward compat with existing routes
 export {
@@ -13,6 +14,10 @@ export {
 
 // ── Response Formatter (DRY) ───────────────────────────────────
 function createTtsResponse(base64Audio, format, responseFormat) {
+  const outcome = evaluateAudioResult({ base64: base64Audio });
+  if (!outcome.ok) {
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, outcome.message, undefined, outcome.errorKind);
+  }
   const audioBuffer = Buffer.from(base64Audio, "base64");
 
   // JSON format: return base64 encoded audio
@@ -58,9 +63,19 @@ export async function handleTtsCore({ provider, model, input, credentials, respo
     const adapter = getTtsAdapter(provider);
     if (adapter) {
       const result = await adapter.synthesize(input.trim(), model, credentials, responseFormat, { language, style });
-      // Adapter may return a full {success, response} (legacy) or {base64, format}
-      if (result.success !== undefined) return result;
-      return createTtsResponse(result.base64, result.format, responseFormat);
+      // Current adapters return {base64, format}. A legacy full result may
+      // propagate a failure, but a success Response would bypass the shared
+      // non-empty-audio outcome boundary and is therefore rejected.
+      if (result?.success === false) return result;
+      if (result?.success === true) {
+        return createErrorResult(
+          HTTP_STATUS.BAD_GATEWAY,
+          "TTS adapter bypassed audio outcome validation",
+          undefined,
+          "invalid_upstream_json"
+        );
+      }
+      return createTtsResponse(result?.base64, result?.format, responseFormat);
     }
 
     // Generic config-driven (hyperbolic, deepgram, nvidia, huggingface, inworld, cartesia, playht, coqui, tortoise, qwen, ...)
@@ -69,6 +84,11 @@ export async function handleTtsCore({ provider, model, input, credentials, respo
 
     return createErrorResult(HTTP_STATUS.BAD_REQUEST, `Provider '${provider}' does not support TTS via this route.`);
   } catch (err) {
-    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, err.message || "TTS synthesis failed");
+    return createErrorResult(
+      HTTP_STATUS.BAD_GATEWAY,
+      err.message || "TTS synthesis failed",
+      undefined,
+      err.errorKind || "upstream_payload_error"
+    );
   }
 }

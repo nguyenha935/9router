@@ -57,7 +57,7 @@ export function stripContinuityFields(body) {
   return body;
 }
 
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, requestPolicy = null }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, requestPolicy = null, requestSignal = null }) {
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
   // Stable per-session color so all lines of one CLI conversation share a tag
@@ -290,6 +290,12 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     onError: () => trackPendingRequest(model, provider, connectionId, false),
     log, provider, model, reqTag
   });
+  const abortForClient = () => {
+    streamController.handleDisconnect("client_aborted");
+    streamController.abort();
+  };
+  if (requestSignal?.aborted) abortForClient();
+  else requestSignal?.addEventListener?.("abort", abortForClient, { once: true });
 
   const proxyOptions = {
     connectionProxyEnabled: credentials?.providerSpecificData?.connectionProxyEnabled === true,
@@ -425,9 +431,9 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     return createErrorResult(statusCode, errMsg, resetsAtMs, `http_${statusCode}`);
   }
 
-  const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, pxpipe: pxpipeSummary, reqTag, log };
   const appendLog = (extra) => appendRequestLog({ model, provider, connectionId, ...extra }).catch(() => { });
   const trackDone = () => trackPendingRequest(model, provider, connectionId, false);
+  const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, requestSignal, trackDone, appendLog, pxpipe: pxpipeSummary, reqTag, log };
 
   // Provider forced streaming but client wants JSON
   if (!clientRequestedStreaming && providerRequiresStreaming) {

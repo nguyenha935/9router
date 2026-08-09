@@ -67,6 +67,7 @@ export function createSSEStream(options = {}) {
     connectionId = null,
     body = null,
     onStreamComplete = null,
+    outcomeTracker = null,
     apiKey = null
   } = options;
 
@@ -95,17 +96,22 @@ export function createSSEStream(options = {}) {
   let streamDoneSent = false;  // track duplicate [DONE] across transform + flush
   let completionRecorded = false;
 
+  // Lifecycle completion is owned by flush/error/cancel, not by the first finish
+  // chunk. A transport reset can still arrive after that chunk; finalizing there
+  // would clear account state and persist usage before the stream actually ends.
   const recordStreamCompletion = (currentUsage) => {
     if (completionRecorded) return currentUsage;
+    const outcome = outcomeTracker?.finish?.() || { state: "ok", ok: true };
     let finalUsage = currentUsage;
 
-    if (!hasValidUsage(finalUsage) && totalContentLength > 0) {
+    // Estimated usage is only valid after a protocol-confirmed successful terminal.
+    if (outcome.ok && !hasValidUsage(finalUsage) && totalContentLength > 0) {
       finalUsage = estimateUsage(body, totalContentLength, mode === STREAM_MODE.PASSTHROUGH ? FORMATS.OPENAI : sourceFormat);
     }
 
-    if (hasValidUsage(finalUsage)) {
+    if (outcome.ok && hasValidUsage(finalUsage)) {
       logUsage(mode === STREAM_MODE.TRANSLATE ? (state?.provider || targetFormat) : provider, finalUsage, model, connectionId, apiKey);
-    } else {
+    } else if (outcome.ok) {
       appendRequestLog({ model, provider, connectionId, tokens: null, status: "200 OK" }).catch(() => { });
     }
 
@@ -113,14 +119,14 @@ export function createSSEStream(options = {}) {
       onStreamComplete({
         content: accumulatedContent,
         thinking: accumulatedThinking
-      }, finalUsage, ttftAt);
+      }, outcome.ok ? finalUsage : null, ttftAt, outcome);
     }
 
     completionRecorded = true;
-    return finalUsage;
+    return outcome.ok ? finalUsage : null;
   };
 
-  return new TransformStream({
+  const transformStream = new TransformStream({
     transform(chunk, controller) {
       if (!ttftAt) ttftAt = Date.now();
       const text = decoder.decode(chunk, { stream: true });
@@ -221,26 +227,11 @@ export function createSSEStream(options = {}) {
                 usage = mergeUsage(usage, extracted);
               }
 
-              const isFinishChunk = parsed.choices?.[0]?.finish_reason;
-              if (isFinishChunk && !hasValidUsage(parsed.usage)) {
-                const estimated = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
-                parsed.usage = filterUsageForFormat(estimated, FORMATS.OPENAI);
-                output = `data: ${JSON.stringify(parsed)}\n`;
-                usage = estimated;
-                injectedUsage = true;
-              } else if (isFinishChunk && usage) {
-                const buffered = addBufferToUsage(usage);
-                parsed.usage = filterUsageForFormat(buffered, FORMATS.OPENAI);
-                output = `data: ${JSON.stringify(parsed)}\n`;
-                injectedUsage = true;
-              } else if (idFixed || fieldsInjected) {
+              if (idFixed || fieldsInjected) {
                 output = `data: ${JSON.stringify(parsed)}\n`;
                 injectedUsage = true;
               }
 
-              if (isFinishChunk || hasGeminiFamilyFinishReason(parsed)) {
-                usage = recordStreamCompletion(usage);
-              }
             } catch {
               // Skip non-JSON data lines silently — don't forward garbage to clients.
               // Upstream providers sometimes return plain-text errors (HTML, rate-limit
@@ -337,9 +328,6 @@ export function createSSEStream(options = {}) {
         const extracted = extractUsage(parsed);
         if (extracted) state.usage = mergeUsage(state.usage, extracted); // Keep original usage for logging
 
-        if (hasGeminiFamilyFinishReason(parsed)) {
-          state.usage = recordStreamCompletion(state.usage);
-        }
 
         // Responses same-format passthrough: re-emit with original event framing
         if (keepsOpenAIResponsesFormat && openAIResponsesEventName) {
@@ -372,18 +360,6 @@ export function createSSEStream(options = {}) {
               continue; // Skip this empty chunk
             }
 
-            // Inject estimated usage if finish chunk has no valid usage
-            const isFinishChunk = item.type === "message_delta" || item.choices?.[0]?.finish_reason;
-            if (state.finishReason && isFinishChunk && !hasValidUsage(item.usage) && totalContentLength > 0) {
-              const estimated = estimateUsage(body, totalContentLength, sourceFormat);
-              item.usage = filterUsageForFormat(estimated, sourceFormat); // Filter + already has buffer
-              state.usage = estimated;
-            } else if (state.finishReason && isFinishChunk && state.usage) {
-              // Add buffer and filter usage for client (but keep original in state.usage for logging)
-              const buffered = addBufferToUsage(state.usage);
-              item.usage = filterUsageForFormat(buffered, sourceFormat);
-            }
-
             const output = formatSSE(item, sourceFormat);
             reqLogger?.appendConvertedChunk?.(output);
             controller.enqueue(sharedEncoder.encode(output));
@@ -411,12 +387,12 @@ export function createSSEStream(options = {}) {
             controller.enqueue(sharedEncoder.encode(output));
           }
 
-          if (!hasValidUsage(usage) && totalContentLength > 0) {
-            usage = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
-          }
-
           usage = recordStreamCompletion(usage);
-          
+
+          // Never synthesize a success sentinel for a failed/incomplete outcome.
+          const outcome = outcomeTracker?.snapshot?.();
+          if (outcome && !outcome.ok) return;
+
           // IMPORTANT: In passthrough mode we still must terminate the SSE stream.
           // Some clients (e.g. OpenClaw) expect the OpenAI-style sentinel:
           //   data: [DONE]\n\n
@@ -473,7 +449,8 @@ export function createSSEStream(options = {}) {
           }
         }
 
-        // Synthesize response.failed if a Responses passthrough stream never reached a terminal event
+        outcomeTracker?.finish?.();
+        // Synthesize response.failed if a Responses passthrough stream never reached a terminal event.
         const keepsOpenAIResponsesFormat = targetFormat === FORMATS.OPENAI_RESPONSES && sourceFormat === FORMATS.OPENAI_RESPONSES;
         if (keepsOpenAIResponsesFormat && !openAIResponsesTerminalSeen) {
           const failedOutput = formatIncompleteOpenAIResponsesStreamFailure();
@@ -490,19 +467,39 @@ export function createSSEStream(options = {}) {
           streamDoneSent = true;
         }
 
-        if (!hasValidUsage(state?.usage) && totalContentLength > 0) {
-          state.usage = estimateUsage(body, totalContentLength, sourceFormat);
-        }
-
         state.usage = recordStreamCompletion(state?.usage);
       } catch (error) {
-        console.log("Error in flush:", error);
+        const outcome = outcomeTracker?.fail?.(
+          error?.errorKind || "invalid_upstream_json",
+          error?.message || "Failed to finalize upstream stream"
+        );
+        recordStreamCompletion(mode === STREAM_MODE.TRANSLATE ? state?.usage : usage);
+        if (outcome && !error.errorKind) error.errorKind = outcome.errorKind;
+        throw error;
       }
     }
   });
+
+  Object.defineProperty(transformStream, "finalizeOutcome", {
+    value: recordStreamCompletion,
+    enumerable: false,
+  });
+  Object.defineProperty(transformStream, "abortOutcome", {
+    value: (outcome) => {
+      if (completionRecorded) return;
+      if (outcome?.state === "client_aborted") {
+        outcomeTracker?.abortClient?.(outcome.error || "Client disconnected");
+      } else if (outcome && !outcome.ok) {
+        outcomeTracker?.fail?.(outcome.errorKind, outcome.error);
+      }
+      recordStreamCompletion(mode === STREAM_MODE.TRANSLATE ? state?.usage : usage);
+    },
+    enumerable: false,
+  });
+  return transformStream;
 }
 
-export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, customToolNames = null) {
+export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, customToolNames = null, outcomeTracker = null) {
   return createSSEStream({
     mode: STREAM_MODE.TRANSLATE,
     targetFormat,
@@ -515,11 +512,12 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
     connectionId,
     body,
     onStreamComplete,
+    outcomeTracker,
     apiKey
   });
 }
 
-export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null) {
+export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, outcomeTracker = null) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
     provider,
@@ -528,6 +526,7 @@ export function createPassthroughStreamWithLogger(provider = null, reqLogger = n
     connectionId,
     body,
     onStreamComplete,
+    outcomeTracker,
     apiKey
   });
 }

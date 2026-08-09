@@ -95,7 +95,7 @@ describe("handleImageGenerationCore", () => {
               content: {
                 parts: [
                   { text: "Generated image" },
-                  { inlineData: { data: "base64imagedata" } },
+                  { inlineData: { data: "AQID" } },
                 ],
               },
             },
@@ -123,7 +123,7 @@ describe("handleImageGenerationCore", () => {
 
     const responseBody = await result.response.json();
     expect(responseBody.data).toHaveLength(1);
-    expect(responseBody.data[0].b64_json).toBe("base64imagedata");
+    expect(responseBody.data[0].b64_json).toBe("AQID");
   });
 
   it("generates image with Minimax format", async () => {
@@ -210,7 +210,7 @@ describe("handleImageGenerationCore", () => {
   it("generates image with SD WebUI format", async () => {
     global.fetch.mockResolvedValueOnce(
       new Response(
-        JSON.stringify({ images: ["base64sdwebui1", "base64sdwebui2"] }),
+        JSON.stringify({ images: ["AQID", "BAUG"] }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       )
     );
@@ -323,6 +323,9 @@ describe("handleImageGenerationCore", () => {
           "event: response.output_item.done",
           'data: {"item":{"type":"image_generation_call","result":"base64codeximage"}}',
           "",
+          "event: response.completed",
+          'data: {"response":{"status":"completed"}}',
+          "",
           "",
         ].join("\n"),
         { status: 200, headers: { "Content-Type": "text/event-stream" } }
@@ -416,7 +419,7 @@ describe("handleImageGenerationCore", () => {
     global.fetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          result: { image: "base64flux2" },
+          result: { image: "AQID" },
           success: true,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
@@ -450,7 +453,7 @@ describe("handleImageGenerationCore", () => {
       .mockResolvedValueOnce(new Response(new Uint8Array([4, 5, 6]), { status: 200, headers: { "Content-Type": "image/png" } }))
       .mockResolvedValueOnce(
         new Response(
-          JSON.stringify({ result: { image: "base64inpaint" }, success: true }),
+          JSON.stringify({ result: { image: "AQID" }, success: true }),
           { status: 200, headers: { "Content-Type": "application/json" } }
         )
       );
@@ -502,6 +505,48 @@ describe("handleImageGenerationCore", () => {
     expect(result.success).toBe(false);
     expect(result.status).toBe(429);
     expect(result.error).toContain("Rate limit exceeded");
+  });
+
+  it("rejects an HTTP 200 image error before onRequestSuccess", async () => {
+    global.fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { message: "render rejected" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+    const onRequestSuccess = vi.fn();
+
+    const result = await handleImageGenerationCore({
+      body: { prompt: "test" },
+      modelInfo: { provider: "openai", model: "dall-e-3" },
+      credentials: { apiKey: "test-key" },
+      log: null,
+      onRequestSuccess,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.status).toBe(502);
+    expect(result.errorKind).toBe("upstream_payload_error");
+    expect(onRequestSuccess).not.toHaveBeenCalled();
+  });
+
+  it("rejects an HTTP 200 image body without image evidence", async () => {
+    global.fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ created: 1, data: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+
+    const result = await handleImageGenerationCore({
+      body: { prompt: "test" },
+      modelInfo: { provider: "openai", model: "dall-e-3" },
+      credentials: { apiKey: "test-key" },
+      log: null,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errorKind).toBe("empty_upstream_response");
   });
 
   it("handles network errors", async () => {

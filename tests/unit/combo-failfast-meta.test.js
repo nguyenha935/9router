@@ -39,6 +39,29 @@ describe("combo fail-fast honors routing metadata", () => {
     expect(waited).toBe(0); // fail-fast → no cooldown delay before the next model
   });
 
+  it("routes an HTTP 200 semantic failure response to the next combo model", async () => {
+    const semanticFailure = errorResponse(502, "upstream error envelope");
+    setRoutingMeta(semanticFailure, {
+      errorKind: "upstream_payload_error",
+      status: 502,
+      failFast: true,
+    });
+    const handleSingleModel = vi.fn()
+      .mockResolvedValueOnce(semanticFailure)
+      .mockResolvedValueOnce(new Response("ok", { status: 200 }));
+
+    const out = await handleComboChat({
+      body: {},
+      models: ["prov/m1", "prov/m2"],
+      handleSingleModel,
+      log,
+      comboName: "semantic",
+    });
+
+    expect(out.status).toBe(200);
+    expect(handleSingleModel).toHaveBeenCalledTimes(2);
+  });
+
   it("waits the cooldown when the failure is NOT flagged fail-fast", async () => {
     let waited = 0;
     const realSetTimeout = globalThis.setTimeout;

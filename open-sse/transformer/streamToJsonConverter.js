@@ -10,6 +10,11 @@
 function processSSEMessage(msg, state) {
   if (!msg.trim()) return;
 
+  // A protocol failure is terminal and sticky. Some broken upstreams emit a
+  // response.completed event after response.failed/incomplete; that must not
+  // turn the failed request back into a successful lifecycle outcome.
+  if (state.status === "failed" || state.status === "incomplete") return;
+
   const eventMatch = msg.match(/^event:\s*(.+)$/m);
   const dataMatch = msg.match(/^data:\s*(.+)$/m);
   if (!eventMatch || !dataMatch) return;
@@ -20,7 +25,11 @@ function processSSEMessage(msg, state) {
 
   let parsed;
   try { parsed = JSON.parse(dataStr); }
-  catch { return; }
+  catch {
+    state.status = "failed";
+    state.error = { message: "Upstream SSE contained malformed JSON", errorKind: "invalid_upstream_json" };
+    return;
+  }
 
   if (eventType === "response.created") {
     state.responseId = parsed.response?.id || state.responseId;
@@ -36,6 +45,13 @@ function processSSEMessage(msg, state) {
     }
   } else if (eventType === "response.failed") {
     state.status = "failed";
+    state.error = parsed.response?.error || parsed.error || { message: "Upstream response failed" };
+  } else if (eventType === "response.incomplete") {
+    state.status = "incomplete";
+    state.error = parsed.response?.incomplete_details || parsed.response?.error || parsed.error || { message: "Upstream response incomplete" };
+  } else if (eventType === "error") {
+    state.status = "failed";
+    state.error = parsed.error || parsed.response?.error || { message: "Upstream stream emitted an error" };
   }
 }
 
@@ -59,6 +75,7 @@ export async function convertResponsesStreamToJson(stream) {
     responseId: "",
     created: Math.floor(Date.now() / 1000),
     status: "in_progress",
+    error: null,
     usage: { ...EMPTY_RESPONSE },
     items: new Map()
   };
@@ -96,7 +113,8 @@ export async function convertResponsesStreamToJson(stream) {
     id: state.responseId || `resp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     object: "response",
     created_at: state.created,
-    status: state.status || "completed",
+    status: state.status,
+    error: state.error,
     output,
     usage: state.usage
   };

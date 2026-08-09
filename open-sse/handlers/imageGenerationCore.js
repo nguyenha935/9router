@@ -4,6 +4,7 @@ import { refreshWithRetry } from "../services/tokenRefresh.js";
 import { getExecutor } from "../executors/index.js";
 import { getImageAdapter } from "./imageProviders/index.js";
 import { urlToBase64 } from "./imageProviders/_base.js";
+import { evaluateImageJson, extractPayloadError } from "../utils/upstreamOutcome.js";
 
 function serializeRequestBody(requestBody) {
   if (typeof FormData !== "undefined" && requestBody instanceof FormData) return requestBody;
@@ -55,9 +56,13 @@ export async function handleImageGenerationCore({
     try {
       log?.debug?.("IMAGE", `${provider.toUpperCase()} | ${model} | prompt="${body.prompt.slice(0, 50)}..." (executor)`);
       const responseBody = await adapter.executeViaExecutor(model, body, credentials, log);
-      if (onRequestSuccess) await onRequestSuccess();
+      const payloadError = extractPayloadError(responseBody);
+      if (payloadError) return createErrorResult(HTTP_STATUS.BAD_GATEWAY, payloadError.message, undefined, payloadError.errorKind);
       const normalized = adapter.normalize(responseBody, body.prompt);
-      const finalBody = (normalized.created && Array.isArray(normalized.data)) ? normalized : responseBody;
+      const outcome = evaluateImageJson(normalized);
+      if (!outcome.ok) return createErrorResult(HTTP_STATUS.BAD_GATEWAY, outcome.message, undefined, outcome.errorKind);
+      if (onRequestSuccess) await onRequestSuccess();
+      const finalBody = normalized;
 
       if (binaryOutput) {
         const first = finalBody.data?.[0];
@@ -175,8 +180,27 @@ export async function handleImageGenerationCore({
         model,
         body,
       });
-      // Codex streaming case: returns an SSE Response directly
+      // Codex streaming case: returns an SSE Response directly. The adapter's
+      // stream parser emits a protocol-native error event when generation fails;
+      // preserve it as a stream rather than clearing account state here.
       if (parsed?.sseResponse) {
+        if (!parsed.precommit) {
+          return createErrorResult(
+            HTTP_STATUS.BAD_GATEWAY,
+            "Image stream adapter did not provide an outcome barrier",
+            undefined,
+            "invalid_upstream_json"
+          );
+        }
+        const precommit = await parsed.precommit;
+        if (!precommit?.ok) {
+          return createErrorResult(
+            HTTP_STATUS.BAD_GATEWAY,
+            precommit?.message || "Image stream failed before output",
+            undefined,
+            precommit?.errorKind || "upstream_payload_error"
+          );
+        }
         return { success: true, response: parsed.sseResponse };
       }
     } else {
@@ -186,13 +210,25 @@ export async function handleImageGenerationCore({
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, parseError.message || `Invalid response from ${provider}`);
   }
 
-  if (onRequestSuccess) await onRequestSuccess();
+  const payloadError = extractPayloadError(parsed);
+  if (payloadError) {
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, payloadError.message, undefined, payloadError.errorKind);
+  }
 
   // Normalize → OpenAI-compatible shape
-  const normalized = adapter.normalize(parsed, body.prompt);
+  let normalized;
+  try {
+    normalized = adapter.normalize(parsed, body.prompt);
+  } catch (error) {
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, error.message || `Invalid response from ${provider}`, undefined, "invalid_upstream_json");
+  }
 
-  // Already in OpenAI shape? skip re-normalize
-  const finalBody = (normalized.created && Array.isArray(normalized.data)) ? normalized : parsed;
+  const finalBody = normalized;
+  const outcome = evaluateImageJson(finalBody);
+  if (!outcome.ok) {
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, outcome.message, undefined, outcome.errorKind);
+  }
+  if (onRequestSuccess) await onRequestSuccess();
 
   // Binary output: decode first b64_json (or fetch url) into raw bytes
   if (binaryOutput) {

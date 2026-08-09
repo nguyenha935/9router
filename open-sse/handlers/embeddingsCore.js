@@ -3,6 +3,7 @@ import { HTTP_STATUS, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.j
 import { getExecutor } from "../executors/index.js";
 import { refreshWithRetry } from "../services/tokenRefresh.js";
 import { getEmbeddingAdapter } from "./embeddingProviders/index.js";
+import { evaluateEmbeddingJson, extractPayloadError } from "../utils/upstreamOutcome.js";
 
 /**
  * Core embeddings handler — orchestrator only. Provider-specific URL/headers/body/normalize
@@ -123,9 +124,27 @@ export async function handleEmbeddingsCore({
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, `Invalid JSON response from ${provider}`);
   }
 
-  if (onRequestSuccess) await onRequestSuccess();
+  const payloadError = extractPayloadError(responseBody);
+  if (payloadError) {
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, payloadError.message, undefined, payloadError.errorKind);
+  }
 
-  const normalized = adapter.normalize(responseBody, model);
+  let normalized;
+  try {
+    normalized = adapter.normalize(responseBody, model);
+  } catch (error) {
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, error.message || `Invalid embeddings response from ${provider}`, undefined, "invalid_upstream_json");
+  }
+
+  const outcome = evaluateEmbeddingJson(normalized, {
+    allowEmpty: Array.isArray(input) && input.length === 0,
+    encodingFormat: body.encoding_format || "float",
+  });
+  if (!outcome.ok) {
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, outcome.message, undefined, outcome.errorKind);
+  }
+
+  if (onRequestSuccess) await onRequestSuccess();
   log?.debug?.("EMBEDDINGS", `Success | usage=${JSON.stringify(normalized.usage || {})}`);
 
   return {

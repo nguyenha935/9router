@@ -132,7 +132,7 @@ describe("handleVideoProxyCore", () => {
     expect(await result.response.json()).toEqual(payload);
   });
 
-  it("passes a failed job (HTTP 200, status failed) through without translating", async () => {
+  it("converts a failed HTTP 200 job into a routable gateway failure", async () => {
     const payload = { status: "failed", error: { code: "internal_error", message: "render crashed" } };
     global.fetch.mockResolvedValueOnce(jsonResponse(payload));
 
@@ -142,8 +142,10 @@ describe("handleVideoProxyCore", () => {
       credentials: { accessToken: "tok" },
     });
 
-    expect(result.success).toBe(true);
-    expect(await result.response.json()).toEqual(payload);
+    expect(result.success).toBe(false);
+    expect(result.status).toBe(502);
+    expect(result.errorKind).toBe("upstream_payload_error");
+    expect(result.error).toContain("render crashed");
   });
 
   it("url-encodes the request id when polling", async () => {
@@ -265,21 +267,75 @@ describe("handleVideoProxyCore", () => {
     expect(result.error).toContain("[redacted]");
   });
 
-  it("maps client aborts to 408 without retrying", async () => {
+  it("maps client aborts to 499 without retrying", async () => {
     const abortError = new Error("This operation was aborted");
     abortError.name = "AbortError";
     global.fetch.mockRejectedValueOnce(abortError);
+    const controller = new AbortController();
+    controller.abort();
 
     const result = await handleVideoProxyCore({
       provider: "xai",
       action: "generations",
       rawBody: "{}",
       credentials: { accessToken: "tok" },
-      signal: new AbortController().signal,
+      signal: controller.signal,
     });
 
     expect(result.success).toBe(false);
+    expect(result.status).toBe(499);
+    expect(result.errorKind).toBe("aborted");
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps the upstream fetch deadline to 408", async () => {
+    const timeoutError = new Error("The operation timed out");
+    timeoutError.name = "TimeoutError";
+    global.fetch.mockRejectedValueOnce(timeoutError);
+
+    const result = await handleVideoProxyCore({
+      provider: "xai",
+      action: "generations",
+      rawBody: "{}",
+      credentials: { accessToken: "tok" },
+    });
+
     expect(result.status).toBe(408);
+    expect(result.errorKind).toBe("upstream_stall");
+  });
+
+  it("maps an auth-refresh retry deadline to 408", async () => {
+    const timeoutError = new Error("The operation timed out");
+    timeoutError.name = "TimeoutError";
+    global.fetch
+      .mockResolvedValueOnce(jsonResponse({ error: "expired" }, 401))
+      .mockRejectedValueOnce(timeoutError);
+    refreshTokenByProvider.mockResolvedValueOnce({ accessToken: "tok-NEW" });
+
+    const result = await handleVideoProxyCore({
+      provider: "xai",
+      action: "generations",
+      rawBody: "{}",
+      credentials: { accessToken: "tok-OLD", refreshToken: "ref" },
+    });
+
+    expect(result.status).toBe(408);
+    expect(result.errorKind).toBe("upstream_stall");
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a creation response that only claims pending without a job id", async () => {
+    global.fetch.mockResolvedValueOnce(jsonResponse({ status: "pending" }));
+
+    const result = await handleVideoProxyCore({
+      provider: "xai",
+      action: "generations",
+      rawBody: "{}",
+      credentials: { accessToken: "tok" },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errorKind).toBe("invalid_upstream_json");
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 });

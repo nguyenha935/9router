@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { createErrorResult } from "../utils/error.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
+import { extractPayloadError } from "../utils/upstreamOutcome.js";
 
 // Build auth headers from sttConfig + token
 function buildAuthHeaders(cfg, token) {
@@ -32,6 +33,18 @@ async function upstreamError(res) {
   return createErrorResult(res.status, typeof msg === "string" ? msg : JSON.stringify(msg));
 }
 
+function validateTranscriptPayload(data, getText) {
+  const error = extractPayloadError(data);
+  if (error) return createErrorResult(HTTP_STATUS.BAD_GATEWAY, error.message, undefined, error.errorKind);
+  const text = getText(data);
+  // Empty text is valid for silent audio, but only after the provider-specific
+  // success schema has been confirmed by getText returning a string.
+  if (typeof text !== "string") {
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Upstream returned an invalid transcription response", undefined, "invalid_upstream_json");
+  }
+  return jsonResponse({ text });
+}
+
 // Deepgram: raw binary POST + model query param
 async function transcribeDeepgram(cfg, file, model, token, formData) {
   const url = new URL(cfg.baseUrl);
@@ -50,8 +63,7 @@ async function transcribeDeepgram(cfg, file, model, token, formData) {
   });
   if (!res.ok) return upstreamError(res);
   const data = await res.json();
-  const text = data.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? "";
-  return jsonResponse({ text });
+  return validateTranscriptPayload(data, (payload) => payload.results?.channels?.[0]?.alternatives?.[0]?.transcript);
 }
 
 // AssemblyAI: upload → submit → poll (max 120s)
@@ -62,15 +74,27 @@ async function transcribeAssemblyAI(cfg, file, model, token) {
     method: "POST", headers: { ...auth, "Content-Type": "application/octet-stream" }, body: buf,
   });
   if (!up.ok) return upstreamError(up);
-  const { upload_url } = await up.json();
+  const uploadPayload = await up.json();
+  const uploadError = extractPayloadError(uploadPayload);
+  if (uploadError) return createErrorResult(HTTP_STATUS.BAD_GATEWAY, uploadError.message, undefined, uploadError.errorKind);
+  const uploadUrl = uploadPayload?.upload_url;
+  if (typeof uploadUrl !== "string" || !uploadUrl) {
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "AssemblyAI returned an invalid upload response", undefined, "invalid_upstream_json");
+  }
 
   const sub = await fetch(cfg.baseUrl, {
     method: "POST",
     headers: { ...auth, "Content-Type": "application/json" },
-    body: JSON.stringify({ audio_url: upload_url, speech_models: [model], language_detection: true }),
+    body: JSON.stringify({ audio_url: uploadUrl, speech_models: [model], language_detection: true }),
   });
   if (!sub.ok) return upstreamError(sub);
-  const { id } = await sub.json();
+  const submissionPayload = await sub.json();
+  const submissionError = extractPayloadError(submissionPayload);
+  if (submissionError) return createErrorResult(HTTP_STATUS.BAD_GATEWAY, submissionError.message, undefined, submissionError.errorKind);
+  const id = submissionPayload?.id;
+  if (typeof id !== "string" || !id) {
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "AssemblyAI returned an invalid submission response", undefined, "invalid_upstream_json");
+  }
 
   const start = Date.now();
   while (Date.now() - start < 120_000) {
@@ -78,8 +102,14 @@ async function transcribeAssemblyAI(cfg, file, model, token) {
     const poll = await fetch(`${cfg.baseUrl}/${id}`, { headers: auth });
     if (!poll.ok) continue;
     const r = await poll.json();
-    if (r.status === "completed") return jsonResponse({ text: r.text || "" });
-    if (r.status === "error") return createErrorResult(500, r.error || "AssemblyAI failed");
+    const pollError = extractPayloadError(r);
+    if (pollError) return createErrorResult(HTTP_STATUS.BAD_GATEWAY, pollError.message, undefined, pollError.errorKind);
+    if (r.status === "completed") {
+      return validateTranscriptPayload(r, (payload) => typeof payload.text === "string" ? payload.text : undefined);
+    }
+    if (r.status === "error") {
+      return createErrorResult(HTTP_STATUS.BAD_GATEWAY, r.error || "AssemblyAI failed", undefined, "upstream_payload_error");
+    }
   }
   return createErrorResult(504, "AssemblyAI timeout after 120s");
 }
@@ -92,7 +122,11 @@ async function transcribeNvidia(cfg, file, model, token) {
   const res = await fetch(cfg.baseUrl, { method: "POST", headers: buildAuthHeaders(cfg, token), body: fd });
   if (!res.ok) return upstreamError(res);
   const data = await res.json();
-  return jsonResponse({ text: data.text || data.transcript || "" });
+  return validateTranscriptPayload(data, (payload) => {
+    if (typeof payload.text === "string") return payload.text;
+    if (typeof payload.transcript === "string") return payload.transcript;
+    return undefined;
+  });
 }
 
 // Gemini: generateContent with inline_data audio + transcription prompt
@@ -117,8 +151,11 @@ async function transcribeGemini(cfg, file, model, token, formData) {
   });
   if (!res.ok) return upstreamError(res);
   const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).filter(Boolean).join("") || "";
-  return jsonResponse({ text });
+  return validateTranscriptPayload(data, (payload) => {
+    const parts = payload?.candidates?.[0]?.content?.parts;
+    if (!Array.isArray(parts)) return undefined;
+    return parts.map((part) => typeof part?.text === "string" ? part.text : "").join("");
+  });
 }
 
 // HuggingFace: POST raw binary to {baseUrl}/{model_id}
@@ -133,7 +170,7 @@ async function transcribeHuggingFace(cfg, file, model, token) {
   });
   if (!res.ok) return upstreamError(res);
   const data = await res.json();
-  return jsonResponse({ text: data.text || "" });
+  return validateTranscriptPayload(data, (payload) => typeof payload.text === "string" ? payload.text : undefined);
 }
 
 // Default: OpenAI/Groq/Whisper-compatible multipart
@@ -149,6 +186,21 @@ async function transcribeOpenAICompatible(cfg, file, model, token, formData) {
   if (!res.ok) return upstreamError(res);
   const ct = res.headers.get("content-type") || "application/json";
   const txt = await res.text();
+  if (ct.includes("application/json")) {
+    let data;
+    try {
+      data = JSON.parse(txt);
+    } catch {
+      return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Upstream returned invalid transcription JSON", undefined, "invalid_upstream_json");
+    }
+    const error = extractPayloadError(data);
+    if (error) return createErrorResult(HTTP_STATUS.BAD_GATEWAY, error.message, undefined, error.errorKind);
+    if (typeof data?.text !== "string" && typeof data?.transcript !== "string") {
+      return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Upstream returned an invalid transcription response", undefined, "invalid_upstream_json");
+    }
+  }
+  // Plain-text response formats have no object schema to inspect; an empty body
+  // is still a valid transcript for silent audio.
   return { success: true, response: new Response(txt, { status: 200, headers: { "Content-Type": ct, "Access-Control-Allow-Origin": "*" } }) };
 }
 

@@ -10,6 +10,7 @@ import { buildRequestDetail, extractRequestConfig, extractUsageFromResponse, sav
 import { appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
 import { decloakToolNames } from "../../utils/claudeCloaking.js";
 import { ROLE, RESPONSES_ITEM } from "../../translator/schema/index.js";
+import { evaluateChatJson, extractPayloadError } from "../../utils/upstreamOutcome.js";
 
 function parseToolArguments(value) {
   if (!value) return {};
@@ -305,6 +306,39 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   }
 
   reqLogger.logProviderResponse(providerResponse.status, providerResponse.statusText, providerResponse.headers, responseBody);
+
+  const payloadError = extractPayloadError(responseBody);
+  if (payloadError) {
+    appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, payloadError.message, undefined, payloadError.errorKind);
+  }
+
+  const rawOutcome = evaluateChatJson(responseBody, targetFormat);
+  if (!rawOutcome.ok) {
+    appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, rawOutcome.message, undefined, rawOutcome.errorKind);
+  }
+
+  // Decloak tool_use names once on raw Claude body, before any translation (INPUT side)
+  responseBody = decloakToolNames(responseBody, toolNameMap);
+
+  let translatedResponse;
+  try {
+    translatedResponse = needsTranslation(targetFormat, sourceFormat)
+      ? translateNonStreamingResponse(responseBody, targetFormat, sourceFormat, customToolNames)
+      : responseBody;
+  } catch (error) {
+    appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });
+    return createErrorResult(
+      HTTP_STATUS.BAD_GATEWAY,
+      error?.message || "Failed to translate upstream response",
+      undefined,
+      "invalid_upstream_json"
+    );
+  }
+
+  // Clear account state and persist usage only after both semantic validation
+  // and response translation have succeeded.
   if (onRequestSuccess) {
     Promise.resolve()
       .then(onRequestSuccess)
@@ -313,17 +347,10 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
       });
   }
 
-  // Decloak tool_use names once on raw Claude body, before any translation (INPUT side)
-  responseBody = decloakToolNames(responseBody, toolNameMap);
-
   const usage = extractUsageFromResponse(responseBody);
   appendLog({ tokens: usage, status: "200 OK" });
   saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, silent: true });
   if (log?.line) log.line(reqTag, "📊", formatDoneLine({ usage, latency: { total: Date.now() - requestStartTime } }));
-
-  const translatedResponse = needsTranslation(targetFormat, sourceFormat)
-    ? translateNonStreamingResponse(responseBody, targetFormat, sourceFormat, customToolNames)
-    : responseBody;
   const isClaudeMessageResponse = sourceFormat === FORMATS.CLAUDE && translatedResponse?.type === "message";
   // Responses-format translation produces a `object:"response"` body with no
   // `choices`; skip the Chat-Completions-specific post-processing below for it.

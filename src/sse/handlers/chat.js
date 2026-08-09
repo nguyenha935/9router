@@ -321,6 +321,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
       requestPolicy,
+      requestSignal: request?.signal || null,
       log,
       clientRawRequest,
       connectionId: credentials.connectionId,
@@ -363,6 +364,15 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       return result.response;
     }
 
+    // Client cancellation is not an account failure. Return before skip-rule
+    // matching/cooldown so no account health state is changed for a caller abort.
+    const clientAborted = request?.signal?.aborted || result.errorKind === "aborted" || result.status === 499;
+    if (clientAborted) {
+      log.warn("CHAT", `[${provider}/${model}] client aborted; account state unchanged`);
+      setRoutingMeta(result.response, { errorKind: "aborted", status: result.status || 499, failFast: false });
+      return result.response;
+    }
+
     // Mark account unavailable (auto-calculates cooldown with exponential backoff, or precise
     // resetsAtMs). Pass the request-scoped skipRules so the fallback tier matches on the SAME
     // rules the transport tier used — no second getSettings() read that could drift mid-request.
@@ -375,12 +385,6 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // failed. A client abort ends the request instead of consuming budget, and a
     // request that already streamed bytes is never retried.
     if (accountRetry) {
-      const aborted = request?.signal?.aborted || result.errorKind === "aborted" || result.status === 499;
-      if (aborted) {
-        log.warn("CHAT", `[${provider}/${model}] client aborted; not retrying account`);
-        setRoutingMeta(result.response, { errorKind: result.errorKind, status: result.status, failFast: !!failFast });
-        return result.response;
-      }
       // noauth providers expose a single virtual connection whose connectionId is
       // undefined; key it explicitly so the budget is still counted, and terminate
       // below instead of excluding an id that would filter nothing.
