@@ -46,6 +46,8 @@ describe("provider topology helpers", () => {
     expect(topology).toContain('className="router-topology-flow"');
     expect(topology).toContain("providers.forEach((p, i) =>");
     expect(topology).not.toContain("sortTopologyProviders");
+    const usageStats = read("src/shared/components/UsageStats.js");
+    expect(usageStats).toContain("p.noAuth && !p.hidden && !seen.has(p.id)");
     expect(read("src/shared/components/Sidebar.js")).not.toContain("bg-gradient-to-br from-brand-500 to-brand-700 p-1.5");
     expect(read("src/app/login/page.js")).not.toContain("bg-primary/10 p-2");
     const profile = read("src/app/(dashboard)/dashboard/profile/page.js");
