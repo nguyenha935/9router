@@ -48,6 +48,9 @@ describe("provider topology helpers", () => {
     expect(brandingProvider).toContain("querySelectorAll");
     expect(brandingProvider).toContain('removeAttribute("type")');
     expect(brandingProvider).toContain('removeAttribute("sizes")');
+    const branding = read("src/shared/branding.js");
+    expect(branding).toContain("showAuthorPromotions: true");
+    expect(branding).toContain("branding.showAuthorPromotions");
     expect(read("src/app/globals.css")).toContain(".react-flow.router-topology-flow .react-flow__handle");
     const topology = read("src/app/(dashboard)/dashboard/usage/components/ProviderTopology.js");
     expect(topology).toContain('className="router-topology-flow"');
@@ -67,5 +70,9 @@ describe("provider topology helpers", () => {
     expect(brandingModal).toContain("DEFAULT_BRANDING_ASSET_SRC");
     expect(brandingModal).toContain("disabled={locked}");
     expect(brandingModal).toContain("Remove custom {kind}");
+    expect(brandingModal).toContain("Show author promotions");
+    expect(brandingModal).toContain("showAuthorPromotions: draft.showAuthorPromotions !== false");
+    expect(read("src/shared/components/Sidebar.js")).toContain("branding.showAuthorPromotions !== false");
+    expect(read("src/shared/components/Header.js")).toContain("branding.showAuthorPromotions !== false");
   });
 });

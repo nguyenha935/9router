@@ -287,36 +287,40 @@ export default function Sidebar({ onClose }) {
               ) : null;
             })}
 
-            {/* Remote */}
-            <button
-              onClick={() => setShowRemoteModal(true)}
-              className={cn(
-                "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group w-full",
-                "text-text-muted hover:bg-surface-2 hover:text-text-main"
-              )}
-            >
-              <span className="material-symbols-outlined text-[18px] group-hover:text-primary transition-colors">
-                computer
-              </span>
-              <span className="text-[13px] font-medium">9Remote</span>
-            </button>
+            {branding.showAuthorPromotions !== false && (
+              <>
+                {/* Remote */}
+                <button
+                  onClick={() => setShowRemoteModal(true)}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group w-full",
+                    "text-text-muted hover:bg-surface-2 hover:text-text-main"
+                  )}
+                >
+                  <span className="material-symbols-outlined text-[18px] group-hover:text-primary transition-colors">
+                    computer
+                  </span>
+                  <span className="text-[13px] font-medium">9Remote</span>
+                </button>
 
-            {/* 9English */}
-            <a
-              href="https://9english.net/"
-              target="_blank"
-              rel="noreferrer"
-              onClick={onClose}
-              className={cn(
-                "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group w-full",
-                "text-text-muted hover:bg-surface-2 hover:text-text-main"
-              )}
-            >
-              <span className="material-symbols-outlined text-[18px] group-hover:text-primary transition-colors">
-                translate
-              </span>
-              <span className="text-[13px] font-medium">9English</span>
-            </a>
+                {/* 9English */}
+                <a
+                  href="https://9english.net/"
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={onClose}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group w-full",
+                    "text-text-muted hover:bg-surface-2 hover:text-text-main"
+                  )}
+                >
+                  <span className="material-symbols-outlined text-[18px] group-hover:text-primary transition-colors">
+                    translate
+                  </span>
+                  <span className="text-[13px] font-medium">9English</span>
+                </a>
+              </>
+            )}
 
             {/* Settings */}
             <Link
@@ -345,7 +349,9 @@ export default function Sidebar({ onClose }) {
       </aside>
 
       {/* Remote Promo Modal */}
-      <NineRemotePromoModal isOpen={showRemoteModal} onClose={() => setShowRemoteModal(false)} />
+      {branding.showAuthorPromotions !== false && (
+        <NineRemotePromoModal isOpen={showRemoteModal} onClose={() => setShowRemoteModal(false)} />
+      )}
 
       {/* Update Confirmation Modal */}
       <ConfirmModal

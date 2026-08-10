@@ -30,12 +30,14 @@ describe("branding helpers", () => {
       description: "Tagline",
       logoUrl: "https://example.com/logo.png",
       primaryColor: DEFAULT_BRANDING.primaryColor,
+      showAuthorPromotions: true,
       updatedAt: "rev-1",
     });
   });
 
   it("validates name, color, URL, source exclusivity and data-url bytes", () => {
     expect(validateBrandingPatch({ name: " ", primaryColor: "red" })).toMatch(/name/);
+    expect(validateBrandingPatch({ showAuthorPromotions: "no" })).toMatch(/boolean/);
     expect(validateBrandingPatch({ name: "App", logoUrl: "javascript:alert(1)" })).toMatch(/logoUrl/);
     expect(validateBrandingPatch({ name: "App", logoUrl: "https://a", logoDataUrl: "data:image/png;base64,AAAA" })).toMatch(/logo/);
     const validSvg = `data:image/svg+xml;base64,${Buffer.from("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>").toString("base64")}`;
@@ -85,6 +87,10 @@ describe("branding helpers", () => {
 
     const normalized = normalizeBranding({ ...current, logoUrl: "https://example.com/old.png" });
     expect(normalized.logoUrl).toBe("");
+
+    const promotionsHidden = mergeBranding(current, { showAuthorPromotions: false }, "rev-hidden");
+    expect(promotionsHidden.showAuthorPromotions).toBe(false);
+    expect(normalizeBranding({}).showAuthorPromotions).toBe(true);
   });
 
   it("builds a complete palette and only exposes public branding", () => {
@@ -94,6 +100,7 @@ describe("branding helpers", () => {
       name: "Acme",
       description: DEFAULT_BRANDING.description,
       primaryColor: DEFAULT_BRANDING.primaryColor,
+      showAuthorPromotions: true,
       logoSrc: expect.stringContaining("/api/branding/asset?kind=logo"),
       faviconSrc: expect.stringContaining("/api/branding/asset?kind=favicon"),
       revision: "default",
@@ -118,6 +125,7 @@ describe("public branding route", () => {
       name: "Acme",
       description: "Private",
       primaryColor: "#123456",
+      showAuthorPromotions: true,
       logoSrc: expect.any(String),
       faviconSrc: expect.any(String),
       revision: "default",
@@ -164,6 +172,19 @@ describe("branding settings PATCH", () => {
     expect(response.status).toBe(200);
     expect(mocks.updateSettings).toHaveBeenCalledOnce();
     expect(mocks.updateSettings).toHaveBeenCalledWith({ branding: { description: "New tagline" } });
+  });
+
+  it("persists the author-promotion visibility as a branding boolean", async () => {
+    const { PATCH } = await import("@/app/api/settings/route.js");
+    const response = await PATCH(new Request("http://localhost/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ branding: { showAuthorPromotions: false } }),
+    }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(mocks.updateSettings).toHaveBeenCalledWith({ branding: { showAuthorPromotions: false } });
+    expect(body.branding.showAuthorPromotions).toBe(false);
   });
 
   it("rejects a client-supplied updatedAt", async () => {

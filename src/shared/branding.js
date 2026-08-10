@@ -6,6 +6,7 @@ export const DEFAULT_BRANDING = Object.freeze({
   logoDataUrl: "",
   faviconUrl: "",
   faviconDataUrl: "",
+  showAuthorPromotions: true,
   updatedAt: "",
 });
 
@@ -68,6 +69,7 @@ export function normalizeBranding(value) {
     logoDataUrl,
     faviconUrl: faviconDataUrl ? "" : normalizeUrl(source.faviconUrl),
     faviconDataUrl,
+    showAuthorPromotions: source.showAuthorPromotions !== false,
     updatedAt: typeof source.updatedAt === "string" ? source.updatedAt : "",
   };
 }
@@ -149,6 +151,10 @@ export function validateBrandingPatch(patch) {
       (typeof patch.primaryColor !== "string" || !HEX_COLOR.test(patch.primaryColor))) {
     return "branding.primaryColor must be a #RRGGBB color";
   }
+  if (Object.prototype.hasOwnProperty.call(patch, "showAuthorPromotions") &&
+      typeof patch.showAuthorPromotions !== "boolean") {
+    return "branding.showAuthorPromotions must be a boolean";
+  }
   for (const field of ["logoUrl", "faviconUrl"]) {
     const error = validateUrl(patch[field], `branding.${field}`);
     if (error) return error;
@@ -189,6 +195,7 @@ export function publicBranding(value) {
     name: branding.name,
     description: branding.description,
     primaryColor: branding.primaryColor,
+    showAuthorPromotions: branding.showAuthorPromotions,
     logoSrc: `/api/branding/asset?kind=logo&v=${revision}`,
     faviconSrc: `/api/branding/asset?kind=favicon&v=${revision}`,
     revision: branding.updatedAt || "default",

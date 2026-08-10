@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Modal from "@/shared/components/Modal";
 import Button from "@/shared/components/Button";
 import Input from "@/shared/components/Input";
+import Toggle from "@/shared/components/Toggle";
 import { BRANDING_IMAGE_TYPES, BRANDING_LIMITS, DEFAULT_BRANDING, DEFAULT_BRANDING_ASSET_SRC, normalizeBranding, validateBrandingPatch } from "@/shared/branding";
 import { useBranding } from "@/shared/components/BrandingProvider";
 import { cn } from "@/shared/utils/cn";
@@ -216,6 +217,7 @@ export default function BrandingModal({ isOpen, onClose, value, onSaved }) {
     logoDataUrl: logoMode === "upload" ? draft.logoDataUrl : "",
     faviconUrl: faviconMode === "url" ? draft.faviconUrl.trim() : "",
     faviconDataUrl: faviconMode === "upload" ? draft.faviconDataUrl : "",
+    showAuthorPromotions: draft.showAuthorPromotions !== false,
   }), [draft, logoMode, faviconMode]);
 
   const save = async () => {
@@ -329,6 +331,15 @@ export default function BrandingModal({ isOpen, onClose, value, onSaved }) {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <AssetEditor kind="logo" label="Application logo" draft={draft} setDraft={setDraft} mode={logoMode} setMode={setLogoMode} locked={logoLocked} setLocked={setLogoLocked} error={fieldErrors.logo} setError={(message) => setFieldErrors((current) => ({ ...current, logo: message }))} />
           <AssetEditor kind="favicon" label="Browser favicon" draft={draft} setDraft={setDraft} mode={faviconMode} setMode={setFaviconMode} locked={faviconLocked} setLocked={setFaviconLocked} error={fieldErrors.favicon} setError={(message) => setFieldErrors((current) => ({ ...current, favicon: message }))} />
+        </div>
+
+        <div className="rounded-[10px] border border-border bg-bg p-3">
+          <Toggle
+            checked={draft.showAuthorPromotions !== false}
+            onChange={(showAuthorPromotions) => setDraft((current) => ({ ...current, showAuthorPromotions }))}
+            label="Show author promotions"
+            description="Show 9Remote, 9English, and the author donation prompt."
+          />
         </div>
 
         <div className="rounded-[10px] border border-border bg-surface-2 p-3">
