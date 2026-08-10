@@ -48,7 +48,11 @@ describe("provider topology helpers", () => {
     expect(topology).not.toContain("sortTopologyProviders");
     const usageStats = read("src/shared/components/UsageStats.js");
     expect(usageStats).toContain("p.noAuth && !p.hidden && !seen.has(p.id)");
-    expect(read("src/shared/components/Sidebar.js")).not.toContain("bg-gradient-to-br from-brand-500 to-brand-700 p-1.5");
+    const sidebar = read("src/shared/components/Sidebar.js");
+    expect(sidebar).not.toContain("bg-gradient-to-br from-brand-500 to-brand-700 p-1.5");
+    expect(sidebar).not.toContain("Traffic lights");
+    expect(sidebar).not.toContain("bg-[#FF5F56]");
+    expect(read("src/app/globals.css")).not.toContain(".traffic-lights");
     expect(read("src/app/login/page.js")).not.toContain("bg-primary/10 p-2");
     const profile = read("src/app/(dashboard)/dashboard/profile/page.js");
     const brandingModal = read("src/app/(dashboard)/dashboard/profile/BrandingModal.js");
