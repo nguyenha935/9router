@@ -34,15 +34,19 @@ export function applyBrandingToDocument(branding) {
   }
   description.content = current.description;
 
-  let favicon = document.querySelector('link[rel~="icon"][data-runtime-branding]') ||
-    document.querySelector('link[rel~="icon"]');
-  if (!favicon) {
-    favicon = document.createElement("link");
+  const favicons = Array.from(document.querySelectorAll('link[rel~="icon"]'));
+  if (favicons.length === 0) {
+    const favicon = document.createElement("link");
     favicon.rel = "icon";
     document.head.appendChild(favicon);
+    favicons.push(favicon);
   }
-  favicon.dataset.runtimeBranding = "true";
-  favicon.href = current.faviconSrc;
+  for (const favicon of favicons) {
+    favicon.dataset.runtimeBranding = "true";
+    favicon.removeAttribute("type");
+    favicon.removeAttribute("sizes");
+    favicon.href = current.faviconSrc;
+  }
 }
 
 export function BrandingProvider({ children }) {

@@ -40,7 +40,14 @@ describe("provider topology helpers", () => {
   it("keeps the modal, root provider and React Flow CSS regression hooks", () => {
     const read = (file) => fs.readFileSync(path.join(process.cwd(), file), "utf8");
     expect(read("src/app/(dashboard)/dashboard/profile/page.js")).toContain("<BrandingModal");
-    expect(read("src/app/layout.js")).toContain("<BrandingProvider>");
+    const layout = read("src/app/layout.js");
+    expect(layout).toContain("<BrandingProvider>");
+    expect(layout).toContain('icon: "/api/branding/asset?kind=favicon"');
+    expect(layout).not.toContain('icon: "/favicon.svg"');
+    const brandingProvider = read("src/shared/components/BrandingProvider.js");
+    expect(brandingProvider).toContain("querySelectorAll");
+    expect(brandingProvider).toContain('removeAttribute("type")');
+    expect(brandingProvider).toContain('removeAttribute("sizes")');
     expect(read("src/app/globals.css")).toContain(".react-flow.router-topology-flow .react-flow__handle");
     const topology = read("src/app/(dashboard)/dashboard/usage/components/ProviderTopology.js");
     expect(topology).toContain('className="router-topology-flow"');
