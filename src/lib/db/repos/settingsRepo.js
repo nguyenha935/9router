@@ -1,6 +1,7 @@
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { findMatchingSkipRule } from "open-sse/services/accountFallback.js";
+import { DEFAULT_BRANDING, mergeBranding, normalizeBranding } from "@/shared/branding";
 
 const DEFAULT_MITM_ROUTER_BASE = "http://localhost:20128";
 const DEFAULT_HEADROOM_URL = process.env.HEADROOM_URL || "http://localhost:8787";
@@ -110,6 +111,7 @@ const DEFAULT_SETTINGS = {
   maxTransportAttempts: 2,
   providerSkipRules: [DEFAULT_ANTIGRAVITY_CAPACITY_RULE],
   skipRulesSeeded: true,
+  branding: DEFAULT_BRANDING,
 };
 
 async function readRaw() {
@@ -134,6 +136,7 @@ function mergeWithDefaults(raw) {
       }
     }
   }
+  merged.branding = normalizeBranding(raw?.branding);
   return merged;
 }
 
@@ -149,7 +152,11 @@ export async function updateSettings(updates) {
   db.transaction(function () {
     const row = db.get(`SELECT data FROM settings WHERE id = 1`);
     const current = row ? parseJson(row.data, {}) : {};
-    next = { ...current, ...updates };
+    const nextUpdates = { ...updates };
+    if (Object.prototype.hasOwnProperty.call(nextUpdates, "branding")) {
+      nextUpdates.branding = mergeBranding(current.branding, nextUpdates.branding);
+    }
+    next = { ...current, ...nextUpdates };
     db.run(
       `INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
       [stringifyJson(next)],

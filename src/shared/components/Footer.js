@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { APP_CONFIG } from "@/shared/constants/config";
+import BrandLogo from "./BrandLogo";
+import { useBranding } from "./BrandingProvider";
 
 const footerLinks = {
   product: [
@@ -22,6 +23,7 @@ const footerLinks = {
 };
 
 export default function Footer() {
+  const { branding } = useBranding();
   return (
     <footer className="bg-bg border-t border-border pt-16 pb-12">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
@@ -29,21 +31,15 @@ export default function Footer() {
           {/* Brand */}
           <div className="col-span-2 lg:col-span-2">
             <div className="flex items-center gap-2 mb-6">
-              <div className="size-6 text-primary">
-                <svg className="w-full h-full" fill="currentColor" viewBox="0 0 48 48">
-                  <path
-                    clipRule="evenodd"
-                    d="M12.0799 24L4 19.2479L9.95537 8.75216L18.04 13.4961L18.0446 4H29.9554L29.96 13.4961L38.0446 8.75216L44 19.2479L35.92 24L44 28.7521L38.0446 39.2479L29.96 34.5039L29.9554 44H18.0446L18.04 34.5039L9.95537 39.2479L4 28.7521L12.0799 24Z"
-                    fillRule="evenodd"
-                  />
-                </svg>
+              <div className="flex size-6 items-center justify-center overflow-hidden text-primary">
+                <BrandLogo className="size-full" iconClassName="text-[20px]" decorative />
               </div>
               <span className="text-xl font-bold text-text-main">
-                {APP_CONFIG.name}
+                <span data-i18n-skip="true">{branding.name}</span>
               </span>
             </div>
             <p className="text-text-muted mb-6 max-w-sm font-light">
-              The unified interface for modern AI infrastructure. Secure, observable, and scalable.
+              <span data-i18n-skip="true">{branding.description}</span>
             </p>
             {/* Social links */}
             <div className="flex gap-4">
@@ -114,7 +110,7 @@ export default function Footer() {
         {/* Bottom */}
         <div className="border-t border-border pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
           <p className="text-sm text-text-muted">
-            © {new Date().getFullYear()} {APP_CONFIG.name} Inc. All rights reserved.
+            <span data-i18n-skip="true">© {new Date().getFullYear()} {branding.name} Inc. All rights reserved.</span>
           </p>
           <div className="flex gap-6 text-sm text-text-muted">
             <Link href="#" className="hover:text-primary transition-colors">
@@ -129,4 +125,3 @@ export default function Footer() {
     </footer>
   );
 }
-

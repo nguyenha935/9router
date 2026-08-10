@@ -11,6 +11,8 @@ import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import Button from "./Button";
 import { ConfirmModal } from "./Modal";
 import NineRemotePromoModal from "./NineRemotePromoModal";
+import BrandLogo from "./BrandLogo";
+import { useBranding } from "./BrandingProvider";
 
 // const VISIBLE_MEDIA_KINDS = ["embedding", "image", "imageToText", "tts", "stt", "webSearch", "webFetch", "video", "music"];
 const VISIBLE_MEDIA_KINDS = ["embedding", "image", "video", "tts", "stt"];
@@ -40,6 +42,7 @@ const systemItems = [
 ];
 
 export default function Sidebar({ onClose }) {
+  const { branding } = useBranding();
   const pathname = usePathname();
   const [mediaOpen, setMediaOpen] = useState(false);
   const [showRemoteModal, setShowRemoteModal] = useState(false);
@@ -120,12 +123,12 @@ export default function Sidebar({ onClose }) {
         {/* Logo */}
         <div className="px-6 py-4 flex flex-col gap-2">
           <Link href="/dashboard" className="flex items-center gap-3">
-            <div className="flex items-center justify-center size-9 rounded-[10px] bg-gradient-to-br from-brand-500 to-brand-700 shadow-[var(--shadow-warm)]">
-              <span className="material-symbols-outlined text-white text-[20px]">hub</span>
+            <div className="flex size-9 items-center justify-center overflow-hidden rounded-[10px] text-primary">
+              <BrandLogo className="size-full" iconClassName="text-[20px]" decorative />
             </div>
             <div className="flex flex-col">
               <h1 className="text-lg font-semibold tracking-tight text-text-main">
-                {APP_CONFIG.name}
+                <span data-i18n-skip="true">{branding.name}</span>
               </h1>
               <span className="text-xs text-text-muted">v{APP_CONFIG.version}</span>
             </div>
@@ -356,7 +359,7 @@ export default function Sidebar({ onClose }) {
         isOpen={showUpdateModal}
         onClose={() => setShowUpdateModal(false)}
         onConfirm={handleUpdate}
-        title="Update 9Router"
+        title={`Update ${branding.name}`}
         message={`Show install command for v${updateInfo?.latestVersion || ""}? You can copy it and shutdown to install manually.`}
         confirmText="Show Command"
         cancelText="Cancel"
@@ -369,6 +372,7 @@ export default function Sidebar({ onClose }) {
           {isUpdating ? (
             <ManualUpdatePanel
               latestVersion={updateInfo?.latestVersion}
+              brandName={branding.name}
               installCmd={INSTALL_CMD}
               copied={copied}
               onCopyAndShutdown={handleCopyAndShutdown}
@@ -398,7 +402,7 @@ Sidebar.propTypes = {
   onClose: PropTypes.func,
 };
 
-function ManualUpdatePanel({ latestVersion, installCmd, copied, onCopyAndShutdown, onCancel, countdown, isDisconnected }) {
+function ManualUpdatePanel({ latestVersion, brandName, installCmd, copied, onCopyAndShutdown, onCancel, countdown, isDisconnected }) {
   const isCountingDown = countdown > 0;
   return (
     <div className="w-full max-w-lg rounded-xl bg-neutral-900/95 border border-white/10 p-6 text-white">
@@ -407,7 +411,7 @@ function ManualUpdatePanel({ latestVersion, installCmd, copied, onCopyAndShutdow
           <span className="material-symbols-outlined text-[24px]">content_copy</span>
         </div>
         <div>
-          <h2 className="text-lg font-semibold">Update 9Router{latestVersion ? ` to v${latestVersion}` : ""}</h2>
+          <h2 className="text-lg font-semibold" data-i18n-skip="true">Update {brandName}{latestVersion ? ` to v${latestVersion}` : ""}</h2>
           <p className="text-xs text-white/60">
             {isDisconnected
               ? "Server stopped. Paste the command into a terminal to install."
@@ -449,6 +453,7 @@ function ManualUpdatePanel({ latestVersion, installCmd, copied, onCopyAndShutdow
 
 ManualUpdatePanel.propTypes = {
   latestVersion: PropTypes.string,
+  brandName: PropTypes.string.isRequired,
   installCmd: PropTypes.string.isRequired,
   copied: PropTypes.bool,
   onCopyAndShutdown: PropTypes.func.isRequired,

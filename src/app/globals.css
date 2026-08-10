@@ -19,6 +19,7 @@
   --color-brand-300: #ee8d6a;
   --color-brand-400: #ea7855;
   --color-brand-500: #E56A4A;
+  --color-brand-rgb: 229 106 74;
   --color-brand-600: #cc5236;
   --color-brand-700: #a64027;
   --color-brand-800: #7a2f1d;
@@ -210,11 +211,11 @@ body {
 
 /* Selection - brand-tinted */
 ::selection {
-  background-color: rgba(229, 106, 74, 0.25);
+  background-color: rgb(var(--color-brand-rgb) / 0.25);
   color: var(--color-primary);
 }
 .dark ::selection {
-  background-color: rgba(229, 106, 74, 0.3);
+  background-color: rgb(var(--color-brand-rgb) / 0.3);
   color: var(--color-brand-300);
 }
 
@@ -473,6 +474,38 @@ button:disabled,
   opacity: 0.04;
 }
 
+/* Landing branding follows the runtime palette without changing its dark layout. */
+.landing-brand-bg { background-color: var(--color-primary); }
+.landing-brand-text { color: var(--color-primary); }
+.landing-brand-border { border-color: var(--color-primary); }
+.landing-brand-link:hover { color: var(--color-primary); }
+.landing-brand-hover-border:hover { border-color: rgb(var(--color-brand-rgb) / 0.5); }
+.landing-brand-orb { background-color: rgb(var(--color-brand-rgb) / 0.14); }
+.landing-brand-gradient { background: linear-gradient(135deg, var(--color-primary), var(--color-brand-700)); }
+.landing-brand-button {
+  background-color: var(--color-primary);
+  color: #181411;
+  box-shadow: 0 0 18px rgb(var(--color-brand-rgb) / 0.42);
+}
+.landing-brand-button:hover {
+  background-color: var(--color-primary-hover);
+  box-shadow: 0 0 24px rgb(var(--color-brand-rgb) / 0.58);
+}
+.landing-brand-step {
+  color: var(--color-primary);
+  background-color: rgb(var(--color-brand-rgb) / 0.2);
+}
+.landing-brand-node,
+.landing-brand-flow-core {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 32px rgb(var(--color-brand-rgb) / 0.26);
+}
+.landing-brand-flow-line {
+  background: linear-gradient(to right, #374151, var(--color-primary), #374151);
+}
+.landing-brand-ring { box-shadow: 0 0 0 4px rgb(var(--color-brand-rgb) / 0.5); }
+
 /* Topology: router card pulse (no flying rings) + electric edge beam */
 @keyframes topology-router-pulse {
   0%, 100% {
@@ -536,7 +569,22 @@ button:disabled,
 }
 
 /* React Flow controls: match app theme */
-.react-flow-controls-custom {
+.react-flow.router-topology-flow {
+  --xy-controls-button-background-color: var(--color-surface);
+  --xy-controls-button-color: var(--color-text-main);
+  --xy-controls-button-border-color: var(--color-border);
+}
+
+.react-flow.router-topology-flow .react-flow__handle {
+  width: 0;
+  height: 0;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+}
+
+.react-flow.router-topology-flow .react-flow__controls {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 10px;
@@ -544,19 +592,37 @@ button:disabled,
   overflow: hidden;
 }
 
-.react-flow-controls-custom button {
+.react-flow.router-topology-flow .react-flow__controls-button {
   background: var(--color-surface);
   color: var(--color-text-main);
   border: 0;
   border-bottom: 1px solid var(--color-border);
 }
 
-.react-flow-controls-custom button:last-child {
+.react-flow.router-topology-flow .react-flow__controls-button:last-child {
   border-bottom: 0;
 }
 
-.react-flow-controls-custom button:hover {
+.react-flow.router-topology-flow .react-flow__controls-button:hover {
   background: var(--color-bg-alt);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .topology-router-core,
+  .topology-router-icon,
+  .topology-router-label,
+  .topology-node-pulse,
+  .topology-edge-kame,
+  .topology-edge-halo,
+  .topology-edge-plasma,
+  .react-flow.router-topology-flow .react-flow__edges animate,
+  .react-flow.router-topology-flow .react-flow__edges animateMotion {
+    animation: none !important;
+  }
+
+  .react-flow.router-topology-flow .topology-edge-electric circle {
+    display: none;
+  }
 }
 
 /* Changelog markdown body */

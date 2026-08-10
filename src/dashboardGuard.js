@@ -27,6 +27,7 @@ const PUBLIC_API_PATHS = [
   "/api/auth/logout",
   "/api/auth/status",
   "/api/auth/oidc",
+  "/api/branding",
   "/api/version",
   "/api/settings/require-login",
 ];

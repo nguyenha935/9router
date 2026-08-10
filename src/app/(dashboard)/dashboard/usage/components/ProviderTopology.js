@@ -12,7 +12,16 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
-import { getProviderIconSrc, markProviderIconMissing } from "@/shared/utils/providerIcon";
+import ProviderIcon from "@/shared/components/ProviderIcon";
+import { getProviderDisplayIconSrc } from "@/shared/utils/providerIcon";
+import BrandLogo from "@/shared/components/BrandLogo";
+import { useBranding } from "@/shared/components/BrandingProvider";
+import {
+  TOPOLOGY_GEOMETRY,
+  getCompatibleBadge,
+  getFallbackProviderColor,
+  getTopologyPosition,
+} from "@/shared/providerTopology";
 
 // Force-stop FE animation if a provider stays active longer than this
 const FE_ACTIVE_TIMEOUT_MS = 60000;
@@ -23,24 +32,25 @@ const KAME_PARTICLE_COUNT = 6;
 const SPARK_COUNT = 5;
 
 function getProviderConfig(providerId) {
-  return AI_PROVIDERS[providerId] || { color: "#6b7280", name: providerId };
+  return AI_PROVIDERS[providerId] || { color: getFallbackProviderColor(providerId), name: providerId };
 }
 
-function getProviderImageUrl(providerId) {
-  return getProviderIconSrc(providerId);
+function getProviderImageUrl(providerId, apiType) {
+  return getProviderDisplayIconSrc(providerId, apiType);
 }
 
 // Custom provider node - rectangle with image + name
 function ProviderNode({ data }) {
-  const { label, color, imageUrl, textIcon, active } = data;
-  const [imgError, setImgError] = useState(false);
+  const { label, color, imageUrl, textIcon, active, error, last } = data;
   return (
     <div
-      className="flex items-center gap-2.5 px-4 py-2.5 rounded-lg border-2 transition-all duration-300 bg-bg"
+      className="router-topology-provider-node relative flex items-center gap-2 rounded-lg border bg-bg/65 px-3 backdrop-blur-[2px] transition-all duration-300"
       style={{
-        borderColor: active ? color : "var(--color-border)",
-        boxShadow: active ? `0 0 16px ${color}40` : "none",
-        minWidth: "150px",
+        width: TOPOLOGY_GEOMETRY.providerWidth,
+        minWidth: TOPOLOGY_GEOMETRY.providerWidth,
+        height: TOPOLOGY_GEOMETRY.providerHeight,
+        borderColor: error ? "var(--color-danger)" : active ? color : last ? "var(--color-warning)" : "var(--color-border)",
+        boxShadow: error ? "0 0 14px rgb(239 68 68 / .28)" : active ? `0 0 16px ${color}40` : last ? "0 0 12px rgb(245 158 11 / .2)" : "none",
       }}
     >
       <Handle type="target" position={Position.Top} id="top" className="!bg-transparent !border-0 !w-0 !h-0" />
@@ -50,40 +60,32 @@ function ProviderNode({ data }) {
 
       {/* Provider icon */}
       <div
-        className="w-8 h-8 rounded-md flex items-center justify-center shrink-0"
-        style={{ backgroundColor: `${color}15` }}
+        className="flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-md"
+        style={{ backgroundColor: `${color}12` }}
       >
-        {imageUrl && !imgError ? (
-          <img
-            src={imageUrl}
-            alt={label}
-            className="w-6 h-6 rounded-sm object-contain"
-            loading="lazy"
-            decoding="async"
-            onError={() => {
-              const m = imageUrl?.match(/^\/providers\/([^/]+)\.png$/i);
-              if (m) markProviderIconMissing(m[1]);
-              setImgError(true);
-            }}
-          />
-        ) : (
-          <span className="text-sm font-bold" style={{ color }}>{textIcon}</span>
-        )}
+        <ProviderIcon
+          src={imageUrl}
+          alt={label}
+          size={18}
+          className="max-h-[18px] max-w-[18px] rounded-md object-contain"
+          fallbackText={textIcon}
+          fallbackColor={color}
+        />
       </div>
 
       {/* Provider name */}
       <span
-        className="text-base font-medium truncate"
-        style={{ color: active ? color : "var(--color-text)" }}
+        className="min-w-0 flex-1 truncate text-sm font-medium"
+        style={{ color: active ? color : error ? "var(--color-danger)" : last ? "var(--color-warning)" : "var(--color-text)" }}
       >
         {label}
       </span>
 
       {/* Active indicator */}
-      {active && (
-        <span className="relative flex h-2 w-2 shrink-0">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: color }} />
-          <span className="relative inline-flex rounded-full h-2 w-2" style={{ backgroundColor: color }} />
+      {(active || error || last) && (
+        <span className="relative flex size-1.5 shrink-0">
+          <span className="topology-node-pulse absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: error ? "var(--color-danger)" : last ? "var(--color-warning)" : color }} />
+          <span className="relative inline-flex size-1.5 rounded-full" style={{ backgroundColor: error ? "var(--color-danger)" : last ? "var(--color-warning)" : color }} />
         </span>
       )}
     </div>
@@ -97,31 +99,30 @@ ProviderNode.propTypes = {
 // Center 9Router node — pulse/glow on card only (no expanding rings)
 function RouterNode({ data }) {
   const powering = (data.activeCount || 0) > 0;
+  const { branding } = useBranding();
   return (
     <div
-      className={`relative z-[1] flex items-center justify-center px-5 py-3 rounded-xl border-2 min-w-[130px] ${
+      className={`router-topology-router-node relative z-[1] flex min-w-[130px] items-center justify-center rounded-xl border-2 px-5 py-3 ${
         powering
           ? "topology-router-core border-yellow-300 bg-gradient-to-br from-primary/30 via-yellow-400/20 to-cyan-400/25"
           : "border-primary bg-primary/5 shadow-md"
       }`}
+      style={{ borderColor: branding.primaryColor }}
+      title={branding.description}
+      aria-label={`${branding.name}: ${branding.description}`}
+      data-i18n-skip="true"
     >
       <Handle type="source" position={Position.Top} id="top" className="!bg-transparent !border-0 !w-0 !h-0" />
       <Handle type="source" position={Position.Bottom} id="bottom" className="!bg-transparent !border-0 !w-0 !h-0" />
       <Handle type="source" position={Position.Left} id="left" className="!bg-transparent !border-0 !w-0 !h-0" />
       <Handle type="source" position={Position.Right} id="right" className="!bg-transparent !border-0 !w-0 !h-0" />
 
-      <img
-        src="/favicon.svg"
-        alt="9Router"
-        className={`w-6 h-6 mr-2 ${powering ? "topology-router-icon" : ""}`}
-        loading="lazy"
-        decoding="async"
-      />
+      <BrandLogo className={`mr-2 size-6 ${powering ? "topology-router-icon" : ""}`} decorative />
       <span className={`text-sm font-bold ${powering ? "topology-router-label text-yellow-300" : "text-primary"}`}>
-        9Router
+        {branding.name}
       </span>
       {data.activeCount > 0 && (
-        <span className="ml-2 px-1.5 py-0.5 rounded-full bg-yellow-400 text-black text-xs font-bold topology-router-badge">
+        <span className="topology-router-badge ml-2 rounded-full bg-yellow-400 px-1.5 py-0.5 text-xs font-bold text-black">
           {data.activeCount}
         </span>
       )}
@@ -261,21 +262,10 @@ const edgeTypes = { topology: TopologyEdge };
 
 // Place N nodes evenly along an ellipse around the router center.
 function buildLayout(providers, activeSet, lastSet, errorSet) {
-  const nodeW = 180;
-  const nodeH = 30;
-  const routerW = 120;
-  const routerH = 44;
-  const nodeGap = 24;
-
   const count = providers.length;
-
-  // Compute rx so arc spacing between nodes >= nodeW + nodeGap
-  const minRx = ((nodeW + nodeGap) * count) / (2 * Math.PI);
-  const rx = Math.max(320, minRx);
-  const ry = Math.max(200, rx * 0.55); // ellipse ratio ~0.55
   if (count === 0) {
     return {
-      nodes: [{ id: "router", type: "router", position: { x: 0, y: 0 }, data: { activeCount: 0 }, draggable: false }],
+      nodes: [{ id: "router", type: "router", position: { x: -TOPOLOGY_GEOMETRY.routerWidth / 2, y: -TOPOLOGY_GEOMETRY.routerHeight / 2 }, data: { activeCount: 0 }, draggable: false }],
       edges: [],
     };
   }
@@ -286,7 +276,7 @@ function buildLayout(providers, activeSet, lastSet, errorSet) {
   nodes.push({
     id: "router",
     type: "router",
-    position: { x: -routerW / 2, y: -routerH / 2 },
+    position: { x: -TOPOLOGY_GEOMETRY.routerWidth / 2, y: -TOPOLOGY_GEOMETRY.routerHeight / 2 },
     data: { activeCount: activeSet.size },
     draggable: false,
   });
@@ -299,23 +289,29 @@ function buildLayout(providers, activeSet, lastSet, errorSet) {
   };
 
   providers.forEach((p, i) => {
-    const config = getProviderConfig(p.provider);
+    const providerId = String(p.provider || "").toLowerCase();
+    const config = getProviderConfig(providerId);
     const active = activeSet.has(p.provider?.toLowerCase());
-    const last = !active && lastSet.has(p.provider?.toLowerCase());
-    const error = !active && errorSet.has(p.provider?.toLowerCase());
-    const nodeId = `provider-${p.provider}`;
+    const error = !active && errorSet.has(providerId);
+    const last = !active && !error && lastSet.has(providerId);
+    const nodeId = `provider-${providerId}`;
+    const builtIn = !!AI_PROVIDERS[providerId];
+    const label = builtIn
+      ? (config.name || p.name || providerId)
+      : (p.nodeName || p.name || providerId);
+    const compatibleBadge = getCompatibleBadge(providerId, p.apiType);
     const data = {
-      label: (config.name !== p.provider ? config.name : null) || p.nodeName || p.name || p.provider,
-      color: config.color || "#6b7280",
-      imageUrl: getProviderImageUrl(p.provider),
-      textIcon: config.textIcon || (p.provider || "?").slice(0, 2).toUpperCase(),
+      label,
+      color: config.color || getFallbackProviderColor(providerId),
+      imageUrl: getProviderImageUrl(providerId, p.apiType),
+      textIcon: config.textIcon || compatibleBadge || providerId.slice(0, 2).toUpperCase(),
       active,
+      last,
+      error,
     };
 
     // Distribute evenly starting from top (−π/2), clockwise
-    const angle = -Math.PI / 2 + (2 * Math.PI * i) / count;
-    const cx = rx * Math.cos(angle);
-    const cy = ry * Math.sin(angle);
+    const { x: cx, y: cy, angle } = getTopologyPosition(i, count);
 
     // Pick router handle closest to the node direction
     let sourceHandle, targetHandle;
@@ -332,7 +328,7 @@ function buildLayout(providers, activeSet, lastSet, errorSet) {
     nodes.push({
       id: nodeId,
       type: "provider",
-      position: { x: cx - nodeW / 2, y: cy - nodeH / 2 },
+      position: { x: cx - TOPOLOGY_GEOMETRY.providerWidth / 2, y: cy - TOPOLOGY_GEOMETRY.providerHeight / 2 },
       data,
       draggable: false,
     });
@@ -405,7 +401,7 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
 
   // Stable key — only remount when provider list changes
   const providersKey = useMemo(
-    () => providers.map((p) => p.provider).sort().join(","),
+    () => providers.map((p) => p.provider).join(","),
     [providers]
   );
 
@@ -445,6 +441,7 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
       ) : (
         <ReactFlow
           key={providersKey}
+          className="router-topology-flow"
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}

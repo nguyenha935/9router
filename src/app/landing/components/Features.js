@@ -18,11 +18,11 @@ const FEATURES = [
     title: "Easy Setup", 
     desc: "Get up and running in minutes with npx command.", 
     colors: {
-      border: "hover:border-orange-500/50",
-      bg: "hover:bg-orange-500/5",
-      iconBg: "bg-orange-500/10",
-      iconText: "text-orange-500",
-      titleHover: "group-hover:text-orange-400"
+      border: "hover:border-brand-500/50",
+      bg: "hover:bg-brand-500/5",
+      iconBg: "bg-brand-500/10",
+      iconText: "text-brand-500",
+      titleHover: "group-hover:text-brand-400"
     }
   },
   { 
@@ -130,4 +130,3 @@ export default function Features() {
     </section>
   );
 }
-

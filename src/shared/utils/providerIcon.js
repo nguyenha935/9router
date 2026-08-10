@@ -31,6 +31,16 @@ export function getProviderIconSrc(providerId) {
   return id ? `/providers/${id}.png` : null;
 }
 
+/** Match the specialized compatible-provider icons used by the Providers UI. */
+export function getProviderDisplayIconSrc(providerId, apiType) {
+  const id = normalizeId(providerId);
+  if (id.startsWith("openai-compatible-")) {
+    return apiType === "responses" ? "/providers/oai-r.png" : "/providers/oai-cc.png";
+  }
+  if (id.startsWith("anthropic-compatible-")) return "/providers/anthropic-m.png";
+  return getProviderIconSrc(id);
+}
+
 /** Call from img onError so later mounts skip the request. */
 export function markProviderIconMissing(providerId) {
   const id = normalizeId(providerId);

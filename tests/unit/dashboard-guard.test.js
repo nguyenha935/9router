@@ -61,6 +61,14 @@ describe("dashboard guard public LLM API access", () => {
     expect(mocks.validateApiKey).not.toHaveBeenCalled();
   });
 
+  it("allows public branding metadata and assets before dashboard login", async () => {
+    for (const pathname of ["/api/branding", "/api/branding/asset?kind=logo"]) {
+      const response = await proxy(request(pathname, { host: "router.example.com" }));
+      expect(response).toBe(mocks.nextResponse);
+    }
+    expect(mocks.verifyDashboardAuthToken).not.toHaveBeenCalled();
+  });
+
   it("rejects remote Host-spoof when real peer IP is non-loopback", async () => {
     const response = await proxy(request("/v1/chat/completions", {
       host: "localhost",

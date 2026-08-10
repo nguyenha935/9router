@@ -1,11 +1,14 @@
 "use client";
+import BrandLogo from "@/shared/components/BrandLogo";
+import { useBranding } from "@/shared/components/BrandingProvider";
 
 export default function HowItWorks() {
+  const { branding } = useBranding();
   return (
     <section className="py-24 border-y border-[#3a2f27] bg-[#23180f]/30" id="how-it-works">
       <div className="max-w-7xl mx-auto px-6">
         <div className="mb-16">
-          <h2 className="text-3xl md:text-4xl font-bold mb-4">How 9Router Works</h2>
+          <h2 className="text-3xl md:text-4xl font-bold mb-4">How <span data-i18n-skip="true">{branding.name}</span> Works</h2>
           <p className="text-gray-400 max-w-xl text-lg">
             Data flows seamlessly from your application through our intelligent routing layer to the best provider for the job.
           </p>
@@ -13,7 +16,7 @@ export default function HowItWorks() {
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 relative">
           {/* Connection line */}
-          <div className="hidden md:block absolute top-12 left-[16%] right-[16%] h-[2px] bg-linear-to-r from-gray-700 via-[#f97815] to-gray-700 -z-10"></div>
+          <div className="landing-brand-flow-line hidden md:block absolute top-12 left-[16%] right-[16%] h-[2px] -z-10"></div>
           
           {/* Step 1: CLI & SDKs */}
           <div className="flex flex-col gap-6 relative group">
@@ -30,11 +33,11 @@ export default function HowItWorks() {
 
           {/* Step 2: 9Router Hub */}
           <div className="flex flex-col gap-6 relative group md:items-center md:text-center">
-            <div className="w-24 h-24 rounded-2xl bg-[#181411] border-2 border-[#f97815] flex items-center justify-center shadow-[0_0_30px_rgba(249,120,21,0.2)] z-10 mx-auto">
-              <span className="material-symbols-outlined text-4xl text-[#f97815] animate-pulse">hub</span>
+            <div className="landing-brand-node w-24 h-24 rounded-2xl bg-[#181411] border-2 flex items-center justify-center z-10 mx-auto">
+              <BrandLogo className="size-12 animate-pulse" iconClassName="text-4xl" decorative />
             </div>
             <div>
-              <h3 className="text-xl font-bold mb-2 text-[#f97815]">2. 9Router Hub</h3>
+              <h3 className="landing-brand-text text-xl font-bold mb-2">2. <span data-i18n-skip="true">{branding.name}</span> Hub</h3>
               <p className="text-sm text-gray-400">
                 Our engine analyzes the prompt, checks provider health, and routes for lowest latency or cost.
               </p>
@@ -63,4 +66,3 @@ export default function HowItWorks() {
     </section>
   );
 }
-

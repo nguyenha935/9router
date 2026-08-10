@@ -2,8 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { Card, Button, Input } from "@/shared/components";
+import BrandLogo from "@/shared/components/BrandLogo";
+import { useBranding } from "@/shared/components/BrandingProvider";
 
 export default function LoginPage() {
+  const { branding } = useBranding();
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [resetHint, setResetHint] = useState("");
@@ -138,9 +141,13 @@ export default function LoginPage() {
       {/* Faint grid background */}
       <div className="landing-grid absolute inset-0 pointer-events-none" aria-hidden="true" />
       <div className="relative z-10 w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-primary mb-2">9Router</h1>
-          <p className="text-text-muted">
+        <div className="text-center mb-8" data-i18n-skip="true">
+          <div className="mx-auto mb-3 flex size-14 items-center justify-center overflow-hidden rounded-2xl text-primary">
+            <BrandLogo className="size-full" iconClassName="text-[32px]" decorative />
+          </div>
+          <h1 className="text-3xl font-bold text-primary mb-1">{branding.name}</h1>
+          {branding.description && <p className="mb-2 text-sm text-text-muted">{branding.description}</p>}
+          <p className="text-xs text-text-muted">
             {authMode === "oidc" && oidcConfigured
               ? "Sign in with your OIDC provider to access the dashboard"
               : "Enter your password to access the dashboard"}

@@ -5,6 +5,9 @@ import { Card, Button, Toggle, Input } from "@/shared/components";
 import Modal, { ConfirmModal } from "@/shared/components/Modal";
 import LanguageSwitcher from "@/shared/components/LanguageSwitcher";
 import SkipRulesModal from "./SkipRulesModal";
+import BrandingModal from "./BrandingModal";
+import BrandLogo from "@/shared/components/BrandLogo";
+import { useBranding } from "@/shared/components/BrandingProvider";
 import { useTheme } from "@/shared/hooks/useTheme";
 import { cn } from "@/shared/utils/cn";
 import { APP_CONFIG } from "@/shared/constants/config";
@@ -22,8 +25,10 @@ function getLocaleFromCookie() {
 
 export default function ProfilePage() {
   const { theme, setTheme, isDark } = useTheme();
+  const { branding } = useBranding();
   const [locale, setLocale] = useState("en");
   const [langOpen, setLangOpen] = useState(false);
+  const [brandingOpen, setBrandingOpen] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
   const [isShuttingDown, setIsShuttingDown] = useState(false);
   const [settings, setSettings] = useState({ fallbackStrategy: "fill-first" });
@@ -669,22 +674,36 @@ export default function ProfilePage() {
           </div>
         </Card>
 
-        {/* Language */}
+        {/* Preferences */}
         <Card>
           <div className="flex items-center gap-3 mb-4">
             <div className="size-10 rounded-lg bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0">
-              <span className="material-symbols-outlined text-[20px]">language</span>
+              <span className="material-symbols-outlined text-[20px]">tune</span>
             </div>
-            <h3 className="text-base sm:text-lg font-semibold">Language</h3>
+            <h3 className="text-base sm:text-lg font-semibold">Preferences</h3>
           </div>
-          <button
-            onClick={() => setLangOpen(true)}
-            className="flex items-center justify-between w-full p-3 rounded-lg bg-bg border border-border hover:border-primary/50 transition-colors"
-            data-i18n-skip="true"
-          >
-            <span className="text-sm text-text-muted">Display language</span>
-            <span className="text-2xl">{LOCALE_FLAGS[locale] || "🌐"}</span>
-          </button>
+          <div className="overflow-hidden rounded-lg border border-border bg-bg" data-i18n-skip="true">
+            <button
+              onClick={() => setLangOpen(true)}
+              className="flex w-full items-center justify-between p-3 transition-colors hover:bg-surface-2"
+            >
+              <span className="text-sm text-text-muted">Display language</span>
+              <span className="text-2xl">{LOCALE_FLAGS[locale] || "🌐"}</span>
+            </button>
+            <button
+              onClick={() => setBrandingOpen(true)}
+              className="flex w-full items-center justify-between border-t border-border p-3 transition-colors hover:bg-surface-2"
+            >
+              <span className="text-sm text-text-muted">Branding</span>
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="max-w-40 truncate text-sm font-medium text-text-main">{branding.name}</span>
+                <span className="flex size-7 items-center justify-center overflow-hidden rounded-md text-primary">
+                  <BrandLogo className="size-full" iconClassName="text-[16px]" decorative />
+                </span>
+                <span className="material-symbols-outlined text-[18px] text-text-muted">chevron_right</span>
+              </span>
+            </button>
+          </div>
         </Card>
 
         {/* Security */}
@@ -1180,7 +1199,7 @@ export default function ProfilePage() {
 
         {/* App Info */}
         <div className="text-center text-xs sm:text-sm text-text-muted py-4">
-          <p>{APP_CONFIG.name} v{APP_CONFIG.version}</p>
+          <p data-i18n-skip="true">{branding.name} v{APP_CONFIG.version}</p>
           <p className="mt-1">Local Mode - All data stored on your machine</p>
         </div>
       </div>
@@ -1192,6 +1211,12 @@ export default function ProfilePage() {
           setLangOpen(false);
           setLocale(next);
         }}
+      />
+      <BrandingModal
+        isOpen={brandingOpen}
+        onClose={() => setBrandingOpen(false)}
+        value={settings.branding}
+        onSaved={(next) => setSettings((current) => ({ ...current, branding: next }))}
       />
       <ConfirmModal
         isOpen={shutdownOpen}

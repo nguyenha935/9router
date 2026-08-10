@@ -4,6 +4,7 @@ import { applyOutboundProxyEnv } from "@/lib/network/outboundProxy";
 import { resetComboRotation } from "open-sse/services/combo.js";
 import bcrypt from "bcryptjs";
 import { SKIP_RULE_RETRY_ATTEMPTS_MIN } from "open-sse/services/accountFallback.js";
+import { validateBrandingPatch } from "@/shared/branding";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -135,6 +136,13 @@ export async function PATCH(request) {
     if (Object.prototype.hasOwnProperty.call(body, "oidcClientSecret")) {
       if (!body.oidcClientSecret || !String(body.oidcClientSecret).trim()) {
         delete body.oidcClientSecret;
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, "branding")) {
+      const brandingError = validateBrandingPatch(body.branding);
+      if (brandingError) {
+        return NextResponse.json({ error: brandingError }, { status: 400 });
       }
     }
 
